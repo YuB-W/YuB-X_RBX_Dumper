@@ -10,6 +10,7 @@
 #include <mutex>
 #include <DbgHelp.h>
 #include <fstream>  
+#include <filesystem>
 
 #pragma comment(lib, "Dbghelp.lib")
 
@@ -32,7 +33,7 @@ namespace YuBCore {
 
     uintptr_t rebase(uintptr_t address) {
         if (baseAddress == 0) return 0;
-        return (address - baseAddress) ; //+0x400000
+        return (address - baseAddress); //+0x400000
     }
 
     uintptr_t base(uintptr_t address) {
@@ -85,6 +86,8 @@ namespace YuBCore {
     }
 
     void SuspendThreads(DWORD pid) {
+
+        //std::this_thread::sleep_for(std::chrono::seconds(4));
         HANDLE hProcess = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
         if (!hProcess) {
             std::wcerr << L"Failed to open process.\n";
@@ -170,6 +173,57 @@ namespace YuBCore {
         std::cerr << "[-] Module not found: " << moduleName << "\n";
         return false;
     }
+
+
+    std::string GetCurrentUserName() {
+        char buffer[256];
+        DWORD size = sizeof(buffer);
+        if (GetUserNameA(buffer, &size)) {
+            return std::string(buffer);
+        }
+        return "";
+    }
+
+
+    void LaunchRobloxGame(const std::string& placeId) {
+        std::string command;
+
+        #ifdef _WIN32
+                command = "start roblox://experiences/start?placeid=" + placeId;
+        #elif __APPLE__
+                command = "open roblox://experiences/start?placeid=" + placeId;
+        #elif __linux__
+                command = "xdg-open roblox://experiences/start?placeid=" + placeId;
+        #else
+                std::cerr << "Unsupported platform" << std::endl;
+                return;
+        #endif
+        std::system(command.c_str());
+    }
+
+    void CloseRoblox() {
+        std::cout << "Closing Roblox..." << std::endl;
+        system("taskkill /IM RobloxPlayerBeta.exe /F");
+        std::cout << "Roblox closed." << std::endl;
+    }
+
+    bool IsRobloxOpen() {
+        HWND hWnd = FindWindow(NULL, "Roblox");
+        return hWnd != NULL;
+    }
+
+    void WaitForRobloxWindow() {
+        std::cout << "Waiting for Roblox window to open..." << std::endl;
+
+        while (!IsRobloxOpen()) {
+            std::this_thread::sleep_for(std::chrono::seconds(2));
+        }
+        std::cout << "Roblox window is now open!" << std::endl;
+    }
+
+
+    //const std::string& searchStr, uintptr_t stringAddress, int opcode = 0, int skipCallDown = 0, int skipCallUp = 0, int scanMode = 1, int movvv = 0, bool mov = false
+
 
     struct CodePattern {
         uintptr_t lea = 0;
@@ -313,10 +367,13 @@ namespace YuBCore {
     }
 
 
-    CodePattern findLeaCallPattern(const std::string& searchStr, uintptr_t stringAddress, int opcode = 0, int skipCallDown = 0, int skipCallUp = 0, int scanMode = 1, int movvv = 0, bool mov = false) {
+    CodePattern findLeaCallPattern(const std::string& searchStr, uintptr_t stringAddress, int opcode = 0, int skipCallDown = 0, int skipCallUp = 0, int mov = 0) {
         CodePattern result;
         MEMORY_BASIC_INFORMATION mbi;
         uintptr_t currentAddr = baseAddress;
+
+        int scanMode = 1;
+
         size_t callScanRange = (scanMode == 2) ? 0x350 : (scanMode == 3) ? 0x550 : 0x100;
 
         auto getRel32 = [](const std::vector<BYTE>& buf, size_t offset) -> int32_t {
@@ -339,9 +396,6 @@ namespace YuBCore {
             }
             return 0;
             };
-
-        log(LogColor::Cyan, "[*] Smart Scan Mode: " + std::to_string(scanMode));
-        log(LogColor::Cyan, "[*] Target Address : 0x" + to_hex(rebase(stringAddress)));
 
         bool found = false;
         while (!found && currentAddr < baseAddress + baseSize) {
@@ -366,41 +420,12 @@ namespace YuBCore {
                 uintptr_t targetAddr = leaAddr + 7 + displacement;
                 if (targetAddr != stringAddress) continue;
 
-                log(LogColor::Green, "[+] LEA matched at 0x" + to_hex(leaAddr) + " → 0x" + to_hex(targetAddr));
+                log(LogColor::Green, "[+] LEA matched at 0x" + to_hex(rebase(leaAddr)) + " > 0x" + to_hex(rebase(targetAddr)));
                 result.lea = leaAddr;
 
-                //if (mov == true) { 
-                size_t skippedMov = 0;
-              
-                if (searchStr == "cannot %s non-suspended coroutine with arguments")
-                {
-                    //for (size_t i = 0; i + 6 < bytesRead; ++i) {
-                    //    // Look for instruction: mov rax, qword ptr [rip + offset]
-                    //    if (buffer[i] == 0x48 && buffer[i + 1] == 0x89 && buffer[i + 2] == 0x05) {
-                    //        uintptr_t movInstrAddr = currentAddr + i;
+                if (mov > 0) {
+                    size_t skippedMov = 0;
 
-                    //        // Ensure we have enough bytes to read displacement safely
-                    //        int32_t relDisplacement = getRel32(buffer, i + 3);
-                    //        uintptr_t resolvedTargetAddr = movInstrAddr + relDisplacement;
-
-                    //        // Check if it points to the string we're looking for
-                    //        if (resolvedTargetAddr != stringAddress) {
-                    //            log(LogColor::Yellow, "[!] Skipping unrelated MOV at 0x" + to_hex(rebase(movInstrAddr)) +
-                    //                " → 0x" + to_hex(rebase(resolvedTargetAddr)));
-                    //            continue;
-                    //        }
-
-                    //        log(LogColor::Cyan, "[✓] MATCHED MOV at 0x" + to_hex(rebase(movInstrAddr)) +
-                    //            " → [0x" + to_hex(rebase(resolvedTargetAddr)) + "]");
-                    //        result.mov = movInstrAddr;
-                    //        result.movTarget = resolvedTargetAddr;
-                    //        break; // Stop at first valid match
-                    //    }
-                    //}
-                }
-
-
-                else {
                     for (size_t i = 0; i + 6 < bytesRead; ++i) {
                         if (buffer[i] == 0x48 && buffer[i + 1] == 0x89 && buffer[i + 2] == 0x05) {
                             uintptr_t movAddr = currentAddr + i;
@@ -417,27 +442,39 @@ namespace YuBCore {
                             result.movTarget = targetAddr;
                             break;
                         }
+
                     }
                 }
 
-                size_t callOffsetDown = findNearbyCall(buffer, i + 7, callScanRange, true, skipCallDown);
-                if (callOffsetDown) {
-                    uintptr_t callAddr = currentAddr + callOffsetDown;
-                    int32_t rel = getRel32(buffer, callOffsetDown + 1);
-                    result.callAfter = callAddr + 5 + rel;
-                    log(LogColor::Green, "[CALL ↓] at 0x" + to_hex(callAddr) + " → 0x" + to_hex(result.callAfter));
+
+                if (skipCallUp > 0) {
+                    size_t callOffsetUp = findNearbyCall(buffer, i, callScanRange, false, skipCallUp);
+
+                    if (callOffsetUp) {
+                        uintptr_t callAddr = currentAddr + callOffsetUp;
+                        int32_t rel = getRel32(buffer, callOffsetUp + 1);
+                        result.callBefore = callAddr + 5 + rel;
+                        log(LogColor::Green, "[CALL up] at 0x" + skipCallUp + to_hex(rebase(callAddr)) + " ! 0x" + to_hex(rebase(result.callBefore)));
+                        found = true;
+                        break;
+                    }
                 }
 
-                size_t callOffsetUp = findNearbyCall(buffer, i, callScanRange, false, skipCallUp);
-                if (callOffsetUp) {
-                    uintptr_t callAddr = currentAddr + callOffsetUp;
-                    int32_t rel = getRel32(buffer, callOffsetUp + 1);
-                    result.callBefore = callAddr + 5 + rel;
-                    log(LogColor::Green, "[CALL ↑] at 0x" + to_hex(callAddr) + " → 0x" + to_hex(result.callBefore));
+                if (skipCallDown > 0) {
+                    size_t callOffsetDown = findNearbyCall(buffer, i + 7, callScanRange, true, skipCallDown);
+                    if (callOffsetDown) {
+                        uintptr_t callAddr = currentAddr + callOffsetDown;
+                        int32_t rel = getRel32(buffer, callOffsetDown + 1);
+                        result.callAfter = callAddr + 5 + rel;
+                        log(LogColor::Green, "[CALL down] at 0x" + skipCallUp + to_hex(rebase(callAddr)) + " ! 0x" + to_hex(rebase(result.callAfter)));
+                        found = true;
+                        break;
+                    }
                 }
+              
 
                 found = true;
-                break;  // LEA found, exit inner loop
+                break; 
             }
 
             currentAddr += mbi.RegionSize;
@@ -458,9 +495,14 @@ namespace YuBCore {
     }
 
 
-    uintptr_t Xrefs_scan(const std::string& searchStr, int opcode = 0, int skipCallDown = 0, int skipCallUp = 0, int movvv = 0, bool mov = false) {
+    uintptr_t Xrefs_scan(const std::string& searchStr, int opcode = 0, int skipCallDown = 0, int skipCallUp = 0, int mov = 0) {
 
         log(LogColor::Cyan, "[*] Scanning for references to: \"" + searchStr + "\"");
+
+        log(LogColor::Cyan, "[*] opcode : " + std::to_string(opcode));
+        log(LogColor::Cyan, "[*] skipCallDown: " + std::to_string(skipCallDown));
+        log(LogColor::Cyan, "[*] skipCallUp : " + std::to_string(skipCallUp));
+        log(LogColor::Cyan, "[*] mov : " + std::to_string(mov));
 
         uintptr_t stringAddr = YuBCore::findStringInMemory(searchStr);
         if (!stringAddr) {
@@ -472,24 +514,85 @@ namespace YuBCore {
         while (true) {
             log(LogColor::Yellow, "[*] Search attempt " + std::to_string(attempt++) + "...");
 
-            YuBCore::CodePattern pattern = YuBCore::findLeaCallPattern(searchStr,stringAddr, opcode, skipCallDown, skipCallUp, movvv, mov);
 
-            if (searchStr == "ClusterPacketCacheTaskQueue" && searchStr == "cannot %s non-suspended coroutine with arguments" && pattern.movTarget) {
+            YuBCore::CodePattern pattern = YuBCore::findLeaCallPattern(searchStr, stringAddr, opcode, skipCallDown, skipCallUp, mov);
+
+            if (searchStr == "ClusterPacketCacheTaskQueue" || searchStr == "cannot %s non-suspended coroutine with arguments" && pattern.movTarget) {
                 log(LogColor::Green, "[FOUND] " + searchStr);
                 log(LogColor::Green, "         movTarget   : 0x" + to_hex(rebase(pattern.movTarget)));
                 return pattern.movTarget;
             }
-            else if (pattern.lea) {
+            else if (pattern.callAfter) {
                 log(LogColor::Green, "[FOUND] " + searchStr);
                 log(LogColor::Green, "         LEA        : 0x" + to_hex(rebase(pattern.lea)));
                 log(LogColor::Green, "         call_sub   : 0x" + to_hex(rebase(pattern.callAfter)));
                 return pattern.callAfter;
             }
+            else if (pattern.callBefore) {
+                log(LogColor::Green, "[FOUND] " + searchStr);
+                log(LogColor::Green, "         LEA        : 0x" + to_hex(rebase(pattern.lea)));
+                log(LogColor::Green, "         call_sub   : 0x" + to_hex(rebase(pattern.callBefore)));
+                return pattern.callBefore;
+            }
 
-            std::this_thread::sleep_for(std::chrono::milliseconds(100));
+            LaunchRobloxGame("17574618959");
+            std::this_thread::sleep_for(std::chrono::milliseconds(7000));
+
+            DWORD pid = YuBCore::GetProcessIdByName(L"RobloxPlayerBeta.exe");
+
+            //YuBCore::SuspendThreads(pid);
+
+            if (!pid || !YuBCore::attach(pid, "RobloxPlayerBeta.exe")) return 1;
+
         }
 
         return 0x0;
     }
 
+
+    void dump() {
+        const uintptr_t Print = rebase(Xrefs_scan("Current identity is %d", 0x48 , 1 , 0));
+
+        const uintptr_t Task__Defer = rebase(Xrefs_scan("cannot %s non-suspended coroutine with arguments", 0x48, 0, 5, 5)); // mov
+        const uintptr_t RawScheduler = rebase(Xrefs_scan("ClusterPacketCacheTaskQueue", 0x48, 0, 0, 1)); // mov
+
+        const uintptr_t LuaVM__Load = rebase(Xrefs_scan("oldResult,", 0x48, 6));
+
+        const uintptr_t GetGlobalStateForInstance = rebase(Xrefs_scan("Script Start", 0x4C, 0, 2));
+        const uintptr_t DecryptState = rebase(Xrefs_scan("Script Start", 0x4C, 0, 1));
+
+        std::stringstream report;
+        report << "\n"
+            << "const uintptr_t Print                     = REBASE(0x" << std::hex << Print << "); // Current identity is %d\n"
+            << "const uintptr_t RawScheduler              = REBASE(0x" << RawScheduler << "); // ClusterPacketCacheTaskQueue\n"
+            << "const uintptr_t GetGlobalStateForInstance = REBASE(0x" << GetGlobalStateForInstance << ");// Script Start\n"
+            << "const uintptr_t DecryptState              = REBASE(0x" << DecryptState << "); // Script Start\n"
+            << "const uintptr_t LuaVM__Load               = REBASE(0x" << LuaVM__Load << "); // oldResult, moduleRef = ...\n"
+            << "const uintptr_t Task__Defer               = REBASE(0x" << Task__Defer << "); // task.defer\n"
+            << "// YUBX::Core Dumper Finished!\n";
+
+        std::string line;
+        while (std::getline(report, line)) {
+            log(LogColor::Green, line);
+        }
+
+        std::ofstream outFile("dump_report.txt");
+        if (outFile.is_open()) {
+            outFile << report.str();
+            outFile.close();
+            log(LogColor::Cyan, "[*] Report saved to dump_report.txt");
+
+            #ifdef _WIN32
+                        system("start dump_report.txt");
+            #elif __APPLE__
+                        system("open dump_report.txt");
+            #else
+                        system("xdg-open dump_report.txt");
+            #endif
+        }
+        else {
+            log(LogColor::Red, "[-] Failed to save report to file.");
+            std::this_thread::sleep_for(std::chrono::minutes(1));
+        }
+    }
 }
