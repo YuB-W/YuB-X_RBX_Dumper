@@ -231,6 +231,7 @@ namespace YuBCore {
         uintptr_t callAfter = 0;
         uintptr_t mov = 0;
         uintptr_t movTarget = 0;
+        uintptr_t offets = 0;
     };
 
 
@@ -375,7 +376,7 @@ namespace YuBCore {
         }
 
 
-    CodePattern findLeaCallPattern(const std::string& searchStr, uintptr_t stringAddress, int opcode = 0, int skipCallDown = 0, int skipCallUp = 0, int mov = 0) {
+    CodePattern findLeaCallPattern(const std::string& searchStr, uintptr_t stringAddress, int opcode = 0, int skipCallDown = 0, int skipCallUp = 0, int mov = 0 , const std::string& info = "") {
         CodePattern result;
         MEMORY_BASIC_INFORMATION mbi;
         uintptr_t currentAddr = baseAddress;
@@ -444,9 +445,42 @@ namespace YuBCore {
                 if (targetAddr != stringAddress) continue;
 
                 log(LogColor::Green, "[+] LEA matched at 0x" + to_hex(rebase(targetAddr)) + " > 0x" + to_hex(rebase(leaAddr)));
+                
                 result.lea = leaAddr;
 
+                size_t leaOffset = leaAddr - currentAddr;
 
+                if (info.starts_with("DecryptState_offets")) {
+                    size_t count = 0;
+                    for (size_t j = static_cast<size_t>(leaOffset); j >= 6; --j) {
+                        if (buffer[j - 6] == 0x48 && buffer[j - 5] == 0x8D && buffer[j - 4] == 0x88) {
+                            int32_t offset = *reinterpret_cast<int32_t*>(&buffer[j - 3]);
+                            uintptr_t foundAddr = currentAddr + j - 6;
+
+                            log(LogColor::Cyan, "[LEA] Found DecryptState_offets, [rax+" + to_hex(offset) + "] at 0x" + to_hex(rebase(foundAddr)));
+                            log(LogColor::Yellow, "[*] Offset: " + std::to_string(offset));
+                            if (count == 0) result.offets = offset;
+                            count++;
+                            if (count == 2) break;
+                        }
+                    }
+                }
+
+                if (info.starts_with("GlobalState_offets")) {
+                    size_t count = 0;
+                    for (size_t j = static_cast<size_t>(leaOffset); j >= 6; --j) {
+                        if (buffer[j - 6] == 0x48 && buffer[j - 5] == 0x8D && buffer[j - 4] == 0x88) {
+                            int32_t offset = *reinterpret_cast<int32_t*>(&buffer[j - 3]);
+                            uintptr_t foundAddr = currentAddr + j - 6;
+
+                            log(LogColor::Cyan, "[LEA] Found GlobalState_offets, [rax+" + to_hex(offset) + "] at 0x" + to_hex(rebase(foundAddr)));
+                            log(LogColor::Yellow, "[*] Offset: " + std::to_string(offset));
+                            if (count == 1) result.offets = offset;
+                            count++;
+                            if (count == 2) break;
+                        }
+                    }
+                }
 
                 if (searchStr.starts_with("Maximum")) {
 
@@ -543,7 +577,7 @@ namespace YuBCore {
     }
 
 
-    uintptr_t Xrefs_scan(const std::string& searchStr, int opcode = 0, int skipCallDown = 0, int skipCallUp = 0, int mov = 0) {
+    uintptr_t Xrefs_scan(const std::string& searchStr, int opcode = 0, int skipCallDown = 0, int skipCallUp = 0, int mov = 0 , const std::string& info = "") {
 
         log(LogColor::Cyan, "[*] Scanning for references to: \"" + searchStr + "\"");
 
@@ -551,6 +585,7 @@ namespace YuBCore {
         log(LogColor::Cyan, "[*] skipCallDown: " + std::to_string(skipCallDown));
         log(LogColor::Cyan, "[*] skipCallUp : " + std::to_string(skipCallUp));
         log(LogColor::Cyan, "[*] mov : " + std::to_string(mov));
+
 
         uintptr_t stringAddr = YuBCore::findStringInMemory(searchStr);
         if (!stringAddr) {
@@ -563,7 +598,7 @@ namespace YuBCore {
             log(LogColor::Yellow, "[*] Search attempt " + std::to_string(attempt++) + "...");
 
 
-            YuBCore::CodePattern pattern = YuBCore::findLeaCallPattern(searchStr, stringAddr, opcode, skipCallDown, skipCallUp, mov);
+            YuBCore::CodePattern pattern = YuBCore::findLeaCallPattern(searchStr, stringAddr, opcode, skipCallDown, skipCallUp, mov , info);
 
             if (searchStr.starts_with("Cluster") || searchStr.starts_with("cannot") || searchStr.starts_with("Maximum") && pattern.movTarget) {
                 log(LogColor::Green, "[FOUND] " + searchStr);
@@ -583,6 +618,11 @@ namespace YuBCore {
                 log(LogColor::Green, "         call_sub callBefore!!   : 0x" + to_hex(rebase(pattern.callBefore)));
                 return pattern.callBefore;
             }
+            else if (pattern.offets) {
+                log(LogColor::Green, "[FOUND] " + searchStr);
+                log(LogColor::Green, "         offets!   : 0x" + to_hex(rebase(pattern.offets)));
+                return pattern.offets;
+            }
             DWORD pid = YuBCore::GetProcessIdByName(L"RobloxPlayerBeta.exe");
             if (!pid || !YuBCore::attach(pid, "RobloxPlayerBeta.exe")) return 1;
         }
@@ -600,6 +640,9 @@ namespace YuBCore {
         const uintptr_t GetGlobalStateForInstance = Xrefs_scan("Script Start", 0x4C, 0, 2);
         const uintptr_t DecryptState = Xrefs_scan("Script Start", 0x4C, 0, 1);
 
+        const uintptr_t DecryptState_offets = Xrefs_scan("Script Start", 0x4C, 0, 0, 0, "DecryptState_offets");
+        const uintptr_t GlobalState_offets = Xrefs_scan("Script Start", 0x4C, 0, 0 , 0 , "GlobalState_offets");
+
         std::stringstream report;
         report << "\n"
             << "const uintptr_t Print                     = REBASE(0x" << std::hex << to_hex(rebase(Print)) << "); // Current identity is %d\n"
@@ -607,7 +650,11 @@ namespace YuBCore {
             << "const uintptr_t GetGlobalStateForInstance = REBASE(0x" << to_hex(rebase(GetGlobalStateForInstance)) << ");// Script Start\n"
             << "const uintptr_t DecryptState              = REBASE(0x" << to_hex(rebase(DecryptState)) << "); // Script Start\n"
             << "const uintptr_t LuaVM__Load               = REBASE(0x" << to_hex(rebase(LuaVM__Load)) << "); // oldResult, moduleRef = ...\n"
-            << "const uintptr_t Task__Defer               = REBASE(0x" << to_hex(rebase(Task__Defer)) << "); // Maximum re-entrancy depth (%i) \n"
+            << "const uintptr_t Task__Defer               = REBASE(0x" << to_hex(rebase(Task__Defer)) << "); // Maximum re-entrancy depth (%i) \n\n\n"
+            << "namespace ScriptContext {\n"
+            << "    const uintptr_t GlobalState = " << std::to_string(GlobalState_offets) << "; \n"
+            << "    const uintptr_t DecryptState = " << std::to_string(DecryptState_offets) << "; \n"
+            << "}\n"
 
             << "// YUBX::Core Dumper Finished!\n";
 
