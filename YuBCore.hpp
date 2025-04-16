@@ -499,14 +499,14 @@ namespace YuBCore {
                             int32_t disp = getRel32(buffer, j + 3);
                             uintptr_t movTarget = movAddr + 7 + disp;
 
-                            if (skippedMov < 3) {
+                            if (skippedMov < 4) {
                                 //log(LogColor::Yellow, "[!] Skipping MOV at 0x" + to_hex(rebase(movAddr)));
                                 ++skippedMov;
                                 continue;
                             }
 
-                           // log(LogColor::Cyan, "[MOV] Found at 0x" + to_hex(rebase(movAddr)) +
-                               // " [cs:0x" + to_hex(rebase(movTarget)) + "] = RAX");
+                            //log(LogColor::Cyan, "[MOV] Found at 0x" + to_hex(rebase(movAddr)) +
+                                //" [cs:0x" + to_hex(rebase(movTarget)) + "] = RAX");
 
                             result.mov = movAddr;
                             result.movTarget = movTarget;
@@ -618,6 +618,8 @@ namespace YuBCore {
 
 
     void dump() {
+        
+        log(LogColor::Green, "[!] YuB-X Dumper!");
 
         LaunchRobloxGame("17574618959");
 
@@ -627,15 +629,17 @@ namespace YuBCore {
 
         if (!pid || !YuBCore::attach(pid, "RobloxPlayerBeta.exe"));
 
+        log(LogColor::Green, "[!] Start Dump...");
+
         const uintptr_t Print = Xrefs_scan("Current identity is %d", 0x48, 1, 0);
         const uintptr_t Task__Defer = Xrefs_scan("Maximum re-entrancy depth (%i) exceeded calling task.defer", 0x48, 0, 0, 0); // mov
         const uintptr_t RawScheduler = Xrefs_scan("ClusterPacketCacheTaskQueue", 0x48, 0, 0, 1); // mov
-        const uintptr_t LuaVM__Load = Xrefs_scan("oldResult,", 0x48, 6);
+        const uintptr_t LuaVM__Load = Xrefs_scan("oldResult, moduleRef", 0x48, 8);
         const uintptr_t GetGlobalStateForInstance = Xrefs_scan("Script Start", 0x4C, 0, 2);
         const uintptr_t DecryptState = Xrefs_scan("Script Start", 0x4C, 0, 1);
 
         const uintptr_t DecryptState_offets = Xrefs_scan("Script Start", 0x4C, 0, 0, 0, "DecryptState_offets");
-        const uintptr_t GlobalState_offets = Xrefs_scan("Script Start", 0x4C, 0, 0 , 0 , "GlobalState_offets");
+        const uintptr_t GlobalState_offets = Xrefs_scan("Script Start", 0x4C, 0, 0, 0, "GlobalState_offets");
 
         std::stringstream report;
         report << "\n"
@@ -667,7 +671,7 @@ namespace YuBCore {
             log(LogColor::Cyan, "[*] Report saved to dump_report.txt");
 
             #ifdef _WIN32
-            system("start dump_report.txt");
+                        system("start dump_report.txt");
             #endif
         }
         else {
