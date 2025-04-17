@@ -170,7 +170,6 @@
   </ItemDefinitionGroup>
   <ItemGroup>
     <ClCompile Include="Source\EntryPoint\EntryPoint.cpp" />
-    <ClCompile Include="Source\ActionLogger\sf_dumper.cpp" />
   </ItemGroup>
   <ItemGroup>
     <ClInclude Include="YuBCore.hpp" />
