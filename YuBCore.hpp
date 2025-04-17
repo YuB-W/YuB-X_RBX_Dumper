@@ -261,7 +261,7 @@ namespace YuBCore {
         std::cout << "Waiting for Roblox window to open..." << std::endl;
 
         while (!IsRobloxOpen()) {
-            std::this_thread::sleep_for(std::chrono::seconds(2));
+            std::this_thread::sleep_for(std::chrono::seconds(8));
         }
         std::cout << "Roblox window is now open!" << std::endl;
     }
@@ -1000,7 +1000,7 @@ namespace YuBCore {
                 thread,
                 thread_id,
                 *local_msgbox_addr,
-                (uintptr_t)*roblox_dll + 0x2c0058
+                (uintptr_t)*roblox_dll + 0x2c0058 
             );
 
             if (!resume_all_threads(pid)) {
