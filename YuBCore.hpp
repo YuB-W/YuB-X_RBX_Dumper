@@ -11,10 +11,48 @@
 #include <DbgHelp.h>
 #include <fstream>  
 #include <filesystem>
+#include <cstdio>
+#include <array>
+#include <optional>
 
 #pragma comment(lib, "Dbghelp.lib")
 
 namespace YuBCore {
+
+        typedef struct _UNICODE_STRING {
+            USHORT Length;
+            USHORT MaximumLength;
+            PWSTR  Buffer;
+        } UNICODE_STRING, * PUNICODE_STRING;
+
+        typedef struct _OBJECT_ATTRIBUTES {
+            ULONG           Length;
+            HANDLE          RootDirectory;
+            PUNICODE_STRING ObjectName;
+            ULONG           Attributes;
+            PVOID           SecurityDescriptor;
+            PVOID           SecurityQualityOfService;
+        } OBJECT_ATTRIBUTES, * POBJECT_ATTRIBUTES;
+
+    #define InitializeObjectAttributes(p, n, a, r, s) \
+        do { \
+            (p)->Length = sizeof(OBJECT_ATTRIBUTES); \
+            (p)->RootDirectory = r; \
+            (p)->Attributes = a; \
+            (p)->ObjectName = n; \
+            (p)->SecurityDescriptor = s; \
+            (p)->SecurityQualityOfService = NULL; \
+        } while (0)
+
+    #define STATUS_OBJECT_TYPE_MISMATCH ((NTSTATUS)0xC0000024L)
+
+        typedef NTSTATUS(NTAPI* PNtOpenSection)(
+            PHANDLE            SectionHandle,
+            ACCESS_MASK        DesiredAccess,
+            POBJECT_ATTRIBUTES ObjectAttributes
+            );
+
+
 
     enum class XrefType {
         ANY, CODE, DATA
@@ -45,6 +83,20 @@ namespace YuBCore {
         if (baseAddress == 0) return 0;
         return (address - baseAddress + 0x400000);
     }
+
+    void* allocate_memory(HANDLE process, size_t size, DWORD protection) {
+        return VirtualAllocEx(process, NULL, size, MEM_COMMIT | MEM_RESERVE, protection);
+    }
+
+    bool free_memory(HANDLE process, void* address) {
+        return VirtualFreeEx(process, address, 0, MEM_RELEASE);
+    }
+
+    bool write_memory(HANDLE process, void* address, const void* data, size_t size) {
+        SIZE_T written;
+        return WriteProcessMemory(process, address, data, size, &written) && written == size;
+    }
+
 
     DWORD GetProcessIdByName(const std::wstring& name) {
         PROCESSENTRY32W entry = { 0 };
@@ -616,7 +668,6 @@ namespace YuBCore {
         return 0x0;
     }
 
-
     void dump() {
         
         log(LogColor::Green, "[!] YuB-X Dumper!");
@@ -678,5 +729,316 @@ namespace YuBCore {
             log(LogColor::Red, "[-] Failed to save report to file.");
             std::this_thread::sleep_for(std::chrono::minutes(1));
         }
+    }
+
+    bool suspend_all_threads(DWORD pid) {
+        HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        if (snapshot == INVALID_HANDLE_VALUE) return false;
+
+        THREADENTRY32 entry;
+        entry.dwSize = sizeof(THREADENTRY32);
+
+        bool success = true;
+        if (Thread32First(snapshot, &entry)) {
+            do {
+                if (entry.th32OwnerProcessID == pid) {
+                    HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME, FALSE, entry.th32ThreadID);
+                    if (thread) {
+                        if (SuspendThread(thread) == -1) {
+                            success = false;
+                        }
+                        CloseHandle(thread);
+                    }
+                }
+            } while (Thread32Next(snapshot, &entry));
+        }
+
+        CloseHandle(snapshot);
+        return success;
+    }
+
+    bool resume_all_threads(DWORD pid) {
+        HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+        if (snapshot == INVALID_HANDLE_VALUE) return false;
+
+        THREADENTRY32 entry;
+        entry.dwSize = sizeof(THREADENTRY32);
+
+        bool success = true;
+        if (Thread32First(snapshot, &entry)) {
+            do {
+                if (entry.th32OwnerProcessID == pid) {
+                    HANDLE thread = OpenThread(THREAD_SUSPEND_RESUME, FALSE, entry.th32ThreadID);
+                    if (thread) {
+                        if (ResumeThread(thread) == -1) {
+                            success = false;
+                        }
+                        CloseHandle(thread);
+                    }
+                }
+            } while (Thread32Next(snapshot, &entry));
+        }
+
+        CloseHandle(snapshot);
+        return success;
+    }
+
+
+    void whitelist_thread(
+        HANDLE process,
+        HANDLE thread_handle,
+        DWORD thread_id,
+        uintptr_t start_address,
+        uintptr_t thread_map_address)
+    {
+        uintptr_t map[2];
+        if (!ReadProcessMemory(process, (LPCVOID)thread_map_address, &map, sizeof(map), NULL)) {
+            printf("[-] Failed to read thread map\n");
+            return;
+        }
+
+        FILETIME creation_time{ }, exit_time{ }, kernel_time{ }, user_time{ };
+        if (!GetThreadTimes(thread_handle, &creation_time, &exit_time, &kernel_time, &user_time)) {
+            printf("[-] Failed to get thread times\n");
+            return;
+        }
+
+        const uint64_t creation_time_64 = (static_cast<uint64_t>(creation_time.dwHighDateTime) << 32) | creation_time.dwLowDateTime;
+
+        uintptr_t root_entry[3];
+        if (!ReadProcessMemory(process, (LPCVOID)map[0], &root_entry, sizeof(root_entry), NULL)) {
+            printf("[-] Failed to read root entry\n");
+            return;
+        }
+
+        std::array<uintptr_t, 7> entry{
+            map[0], root_entry[1], map[0], 0, thread_id, creation_time_64, start_address
+        };
+
+        void* map_entry = allocate_memory(process, 0x38, PAGE_READWRITE);
+        if (!map_entry) {
+            printf("[-] Failed to allocate memory for map entry\n");
+            return;
+        }
+
+        if (!write_memory(process, map_entry, entry.data(), entry.size() * sizeof(uintptr_t))) {
+            printf("[-] Failed to write map entry\n");
+            free_memory(process, map_entry);
+            return;
+        }
+
+        uintptr_t new_map_size = map[1] + 1;
+        if (!write_memory(process, (void*)(thread_map_address + 8), &new_map_size, sizeof(new_map_size))) {
+            printf("[-] Failed to update map size\n");
+            free_memory(process, map_entry);
+            return;
+        }
+
+        std::array<uintptr_t, 3> next_entry_array{
+            (uintptr_t)map_entry,
+            (uintptr_t)map_entry,
+            (uintptr_t)map_entry
+        };
+
+        if (!write_memory(process, (void*)root_entry[1], next_entry_array.data(), next_entry_array.size() * sizeof(uintptr_t))) {
+            printf("[-] Failed to update next entry\n");
+            free_memory(process, map_entry);
+            return;
+        }
+
+        printf("[+] Whitelisted thread (TID: %lu)\n", thread_id);
+    }
+
+    std::optional<uintptr_t> get_function_address(const char* module_name, const char* function_name) {
+        HMODULE module = LoadLibraryA(module_name);
+        if (!module) {
+            printf("[-] Failed to load module %s locally\n", module_name);
+            return std::nullopt;
+        }
+
+        uintptr_t address = (uintptr_t)GetProcAddress(module, function_name);
+        FreeLibrary(module);
+
+        if (!address) {
+            printf("[-] Failed to get address of %s in %s\n", function_name, module_name);
+            return std::nullopt;
+        }
+
+        return address;
+    }
+
+    std::optional<HMODULE> get_module_base(HANDLE process, const char* module_name) {
+        HMODULE modules[1024];
+        DWORD needed;
+
+        if (EnumProcessModules(process, modules, sizeof(modules), &needed)) {
+            for (DWORD i = 0; i < (needed / sizeof(HMODULE)); i++) {
+                char name[MAX_PATH];
+                if (GetModuleBaseNameA(process, modules[i], name, sizeof(name))) {
+                    if (strcmp(name, module_name) == 0) {
+                        return modules[i];
+                    }
+                }
+            }
+        }
+        return std::nullopt;
+    }
+
+    std::optional<HANDLE> open_process(DWORD pid) {
+        HANDLE handle = OpenProcess(PROCESS_ALL_ACCESS, FALSE, pid);
+        return handle ? std::optional<HANDLE>(handle) : std::nullopt;
+    }
+
+    int msgbox(const std::string& caption, const std::string& text) {
+        try {
+
+            log(LogColor::Green, "[!] YuB-X msgbox!");
+
+            DWORD pid = YuBCore::GetProcessIdByName(L"RobloxPlayerBeta.exe");
+
+            auto process = open_process(pid);
+            if (!process) {
+                printf("[-] Failed to open process (Error: %lu)\n", GetLastError());
+                return 1;
+            }
+
+            log(LogColor::Green, "[!] Start Bypass...");
+
+            auto local_msgbox_addr = get_function_address("user32.dll", "MessageBoxIndirectA");
+            if (!local_msgbox_addr) {
+                return 1;
+            }
+
+            void* data_allocation = allocate_memory(*process, 0x1000, PAGE_READWRITE);
+            if (!data_allocation) {
+                printf("[-] Failed to allocate memory for strings\n");
+                return 1;
+            }
+   
+            if (!write_memory(*process, data_allocation, text.c_str(), strlen(text.c_str()) + 1) ||
+                !write_memory(*process, (char*)data_allocation + 0x100, caption.c_str(), strlen(caption.c_str()) + 1)) {
+                printf("[-] Failed to write strings\n");
+                free_memory(*process, data_allocation);
+                return 1;
+            }
+
+            MSGBOXPARAMSA msgboxParams = {
+                .cbSize = sizeof(MSGBOXPARAMSA),
+                .hwndOwner = NULL,
+                .hInstance = NULL,
+                .lpszText = (LPCSTR)data_allocation,
+                .lpszCaption = (LPCSTR)((char*)data_allocation + 0x100),
+                .dwStyle = MB_OK | MB_ICONINFORMATION,
+                .lpszIcon = NULL,
+                .dwContextHelpId = 0,
+                .lpfnMsgBoxCallback = NULL,
+                .dwLanguageId = MAKELANGID(LANG_NEUTRAL, SUBLANG_DEFAULT)
+            };
+
+            auto main_module = get_module_base(*process, "RobloxPlayerBeta.exe");
+            if (main_module) {
+                msgboxParams.hInstance = (HINSTANCE)*main_module;
+            }
+
+            void* params_allocation = allocate_memory(*process, sizeof(MSGBOXPARAMSA), PAGE_READWRITE);
+            if (!params_allocation) {
+                printf("[-] Failed to allocate memory for params\n");
+                free_memory(*process, data_allocation);
+                return 1;
+            }
+
+            if (!write_memory(*process, params_allocation, &msgboxParams, sizeof(msgboxParams))) {
+                printf("[-] Failed to write params\n");
+                free_memory(*process, data_allocation);
+                free_memory(*process, params_allocation);
+                return 1;
+            }
+
+            printf("[+] Allocated %zu bytes at 0x%p\n", sizeof(MSGBOXPARAMSA), params_allocation);
+
+            if (!suspend_all_threads(pid)) {
+                printf("[-] Failed to suspend threads\n");
+                free_memory(*process, data_allocation);
+                free_memory(*process, params_allocation);
+                return 1;
+            }
+
+            DWORD thread_id = 0;
+            HANDLE thread = CreateRemoteThreadEx(
+                *process,
+                NULL,
+                0,
+                (LPTHREAD_START_ROUTINE)*local_msgbox_addr,
+                params_allocation,
+                CREATE_SUSPENDED,
+                NULL,
+                &thread_id
+            );
+
+            if (!thread) {
+                printf("[-] Failed to create remote thread\n");
+                resume_all_threads(pid);
+                free_memory(*process, data_allocation);
+                free_memory(*process, params_allocation);
+                return 1;
+            }
+
+            printf("[+] Created thread (TID: %lu, Handle: 0x%p)\n", thread_id, thread);
+
+            auto roblox_dll = get_module_base(*process, "RobloxPlayerBeta.dll");
+            if (!roblox_dll) {
+                printf("[-] Failed to get RobloxPlayerBeta.dll base address\n");
+                CloseHandle(thread);
+                resume_all_threads(pid);
+                free_memory(*process, data_allocation);
+                free_memory(*process, params_allocation);
+                return 1;
+            }
+
+            whitelist_thread(
+                *process,
+                thread,
+                thread_id,
+                *local_msgbox_addr,
+                (uintptr_t)*roblox_dll + 0x2c0058
+            );
+
+            if (!resume_all_threads(pid)) {
+                printf("[-] Failed to resume threads\n");
+                CloseHandle(thread);
+                free_memory(*process, data_allocation);
+                free_memory(*process, params_allocation);
+                return 1;
+            }
+
+            if (ResumeThread(thread) == -1) {
+                printf("[-] Failed to resume thread\n");
+                CloseHandle(thread);
+                free_memory(*process, data_allocation);
+                free_memory(*process, params_allocation);
+                return 1;
+            }
+
+            WaitForSingleObject(thread, INFINITE);
+
+            DWORD exit_code = 0;
+            if (!GetExitCodeThread(thread, &exit_code)) {
+                printf("[-] Failed to get exit code\n");
+            }
+            else {
+                printf("[+] Thread exited with code: 0x%08X\n", exit_code);
+            }
+
+
+            CloseHandle(thread);
+            free_memory(*process, data_allocation);
+            free_memory(*process, params_allocation);
+        }
+        catch (...) {
+            printf("[-] An unknown error occurred\n");
+            return 1;
+        }
+
+        return 0;
     }
 }
