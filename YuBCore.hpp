@@ -19,22 +19,22 @@
 
 namespace YuBCore {
 
-        typedef struct _UNICODE_STRING {
-            USHORT Length;
-            USHORT MaximumLength;
-            PWSTR  Buffer;
-        } UNICODE_STRING, * PUNICODE_STRING;
+    typedef struct _UNICODE_STRING {
+        USHORT Length;
+        USHORT MaximumLength;
+        PWSTR  Buffer;
+    } UNICODE_STRING, * PUNICODE_STRING;
 
-        typedef struct _OBJECT_ATTRIBUTES {
-            ULONG           Length;
-            HANDLE          RootDirectory;
-            PUNICODE_STRING ObjectName;
-            ULONG           Attributes;
-            PVOID           SecurityDescriptor;
-            PVOID           SecurityQualityOfService;
-        } OBJECT_ATTRIBUTES, * POBJECT_ATTRIBUTES;
+    typedef struct _OBJECT_ATTRIBUTES {
+        ULONG           Length;
+        HANDLE          RootDirectory;
+        PUNICODE_STRING ObjectName;
+        ULONG           Attributes;
+        PVOID           SecurityDescriptor;
+        PVOID           SecurityQualityOfService;
+    } OBJECT_ATTRIBUTES, * POBJECT_ATTRIBUTES;
 
-    #define InitializeObjectAttributes(p, n, a, r, s) \
+#define InitializeObjectAttributes(p, n, a, r, s) \
         do { \
             (p)->Length = sizeof(OBJECT_ATTRIBUTES); \
             (p)->RootDirectory = r; \
@@ -44,13 +44,13 @@ namespace YuBCore {
             (p)->SecurityQualityOfService = NULL; \
         } while (0)
 
-    #define STATUS_OBJECT_TYPE_MISMATCH ((NTSTATUS)0xC0000024L)
+#define STATUS_OBJECT_TYPE_MISMATCH ((NTSTATUS)0xC0000024L)
 
-        typedef NTSTATUS(NTAPI* PNtOpenSection)(
-            PHANDLE            SectionHandle,
-            ACCESS_MASK        DesiredAccess,
-            POBJECT_ATTRIBUTES ObjectAttributes
-            );
+    typedef NTSTATUS(NTAPI* PNtOpenSection)(
+        PHANDLE            SectionHandle,
+        ACCESS_MASK        DesiredAccess,
+        POBJECT_ATTRIBUTES ObjectAttributes
+        );
 
 
 
@@ -240,9 +240,9 @@ namespace YuBCore {
     void LaunchRobloxGame(const std::string& placeId) {
         std::string command;
 
-        #ifdef _WIN32
-                command = "start roblox://experiences/start?placeid=" + placeId;
-        #endif
+#ifdef _WIN32
+        command = "start roblox://experiences/start?placeid=" + placeId;
+#endif
         std::system(command.c_str());
     }
 
@@ -252,18 +252,34 @@ namespace YuBCore {
         std::cout << "Roblox closed." << std::endl;
     }
 
-    bool IsRobloxOpen() {
-        HWND hWnd = FindWindow(NULL, "Roblox");
-        return hWnd != NULL;
+    bool IsRobloxRunning() {
+        HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (hSnapshot == INVALID_HANDLE_VALUE)
+            return false;
+
+        PROCESSENTRY32 pe;
+        pe.dwSize = sizeof(PROCESSENTRY32);
+
+        if (Process32First(hSnapshot, &pe)) {
+            do {
+                std::string processName(pe.szExeFile);
+                if (processName == "RobloxPlayerBeta.exe") {
+                    CloseHandle(hSnapshot);
+                    return true;
+                }
+            } while (Process32Next(hSnapshot, &pe));
+        }
+
+        CloseHandle(hSnapshot);
+        return false;
     }
 
-    void WaitForRobloxWindow() {
-        std::cout << "Waiting for Roblox window to open..." << std::endl;
-
-        while (!IsRobloxOpen()) {
-            std::this_thread::sleep_for(std::chrono::seconds(8));
+    void WaitForRobloxProcess() {
+        std::cout << "[*] Waiting for Roblox process to start..." << std::endl;
+        while (!IsRobloxRunning()) {
+            std::this_thread::sleep_for(std::chrono::seconds(5));
         }
-        std::cout << "Roblox window is now open!" << std::endl;
+        std::cout << "[+] Roblox process is now running!" << std::endl;
     }
 
     struct CodePattern {
@@ -333,12 +349,12 @@ namespace YuBCore {
             if (attempt < maxRetries) {
                 if (verbose)
                     //std::cout << "[!] String not found. Retrying in " << retryDelayMs << "ms...\n";
-                std::this_thread::sleep_for(std::chrono::milliseconds(retryDelayMs));
+                    std::this_thread::sleep_for(std::chrono::milliseconds(retryDelayMs));
             }
         }
 
         if (verbose) {
-           // std::cout << "[-] String not found in memory after " << maxRetries << " attempts.\n";
+            // std::cout << "[-] String not found in memory after " << maxRetries << " attempts.\n";
         }
 
         return 0;
@@ -407,17 +423,17 @@ namespace YuBCore {
         ss << std::hex << std::uppercase << addr;
         return ss.str();
     }
-    
-        uintptr_t from_hex(const std::string& hexStr) {
-            uintptr_t value;
-            std::stringstream ss;
-            ss << std::hex << hexStr;
-            ss >> value;
-            return value;
-        }
+
+    uintptr_t from_hex(const std::string& hexStr) {
+        uintptr_t value;
+        std::stringstream ss;
+        ss << std::hex << hexStr;
+        ss >> value;
+        return value;
+    }
 
 
-    CodePattern findLeaCallPattern(const std::string& searchStr, uintptr_t stringAddress, int opcode = 0, int skipCallDown = 0, int skipCallUp = 0, int mov = 0 , const std::string& info = "") {
+    CodePattern findLeaCallPattern(const std::string& searchStr, uintptr_t stringAddress, int opcode = 0, int skipCallDown = 0, int skipCallUp = 0, int mov = 0, const std::string& info = "") {
         CodePattern result;
         MEMORY_BASIC_INFORMATION mbi;
         uintptr_t currentAddr = baseAddress;
@@ -442,10 +458,10 @@ namespace YuBCore {
                     std::string direction = forward ? "down" : "up";
                     std::string status = (skipped < skip) ? "skipped" : "selected";
 
-                   /* log(LogColor::Yellow,
-                        "[CALL " + direction + "] at raw: 0x" + to_hex(callAddr) +
-                        " (" + to_hex(rebase(callAddr)) + ") -> dest: 0x" +
-                        to_hex(destAddr) + " (" + to_hex(rebase(destAddr)) + ") [" + status + "]");*/
+                    /* log(LogColor::Yellow,
+                         "[CALL " + direction + "] at raw: 0x" + to_hex(callAddr) +
+                         " (" + to_hex(rebase(callAddr)) + ") -> dest: 0x" +
+                         to_hex(destAddr) + " (" + to_hex(rebase(destAddr)) + ") [" + status + "]");*/
 
                     if (skipped++ < skip) {
                         index += forward ? 1 : -1;
@@ -485,8 +501,8 @@ namespace YuBCore {
                 uintptr_t targetAddr = leaAddr + 7 + displacement;
                 if (targetAddr != stringAddress) continue;
 
-               // log(LogColor::Green, "[+] LEA matched at 0x" + to_hex(rebase(targetAddr)) + " > 0x" + to_hex(rebase(leaAddr)));
-                
+                // log(LogColor::Green, "[+] LEA matched at 0x" + to_hex(rebase(targetAddr)) + " > 0x" + to_hex(rebase(leaAddr)));
+
                 result.lea = leaAddr;
 
                 size_t leaOffset = leaAddr - currentAddr;
@@ -498,8 +514,8 @@ namespace YuBCore {
                             int32_t offset = *reinterpret_cast<int32_t*>(&buffer[j - 3]);
                             uintptr_t foundAddr = currentAddr + j - 6;
 
-                          //  log(LogColor::Cyan, "[LEA] Found DecryptState_offets, [rax+" + to_hex(offset) + "] at 0x" + to_hex(rebase(foundAddr)));
-                           // log(LogColor::Yellow, "[*] Offset: " + std::to_string(offset));
+                            //  log(LogColor::Cyan, "[LEA] Found DecryptState_offets, [rax+" + to_hex(offset) + "] at 0x" + to_hex(rebase(foundAddr)));
+                             // log(LogColor::Yellow, "[*] Offset: " + std::to_string(offset));
                             if (count == 0) result.offets = offset;
                             count++;
                             if (count == 2) break;
@@ -514,8 +530,8 @@ namespace YuBCore {
                             int32_t offset = *reinterpret_cast<int32_t*>(&buffer[j - 3]);
                             uintptr_t foundAddr = currentAddr + j - 6;
 
-                           // log(LogColor::Cyan, "[LEA] Found GlobalState_offets, [rax+" + to_hex(offset) + "] at 0x" + to_hex(rebase(foundAddr)));
-                           // log(LogColor::Yellow, "[*] Offset: " + std::to_string(offset));
+                            // log(LogColor::Cyan, "[LEA] Found GlobalState_offets, [rax+" + to_hex(offset) + "] at 0x" + to_hex(rebase(foundAddr)));
+                            // log(LogColor::Yellow, "[*] Offset: " + std::to_string(offset));
                             if (count == 1) result.offets = offset;
                             count++;
                             if (count == 2) break;
@@ -535,7 +551,7 @@ namespace YuBCore {
                             }
 
                             uintptr_t movAddr = currentAddr + j - 2;
-                           // log(LogColor::Green, "[*] Found .text: 000000000" + to_hex(rebase(movAddr)));
+                            // log(LogColor::Green, "[*] Found .text: 000000000" + to_hex(rebase(movAddr)));
                             result.movTarget = movAddr;
                             break;
                         }
@@ -551,14 +567,14 @@ namespace YuBCore {
                             int32_t disp = getRel32(buffer, j + 3);
                             uintptr_t movTarget = movAddr + 7 + disp;
 
-                            if (skippedMov < 4) {
-                                //log(LogColor::Yellow, "[!] Skipping MOV at 0x" + to_hex(rebase(movAddr)));
-                                ++skippedMov;
-                                continue;
-                            }
+                            /*   if (skippedMov < 4) {
+                                   log(LogColor::Yellow, "[!] Skipping MOV at 0x" + to_hex(rebase(movAddr)));
+                                   ++skippedMov;
+                                   continue;
+                               }
 
-                            //log(LogColor::Cyan, "[MOV] Found at 0x" + to_hex(rebase(movAddr)) +
-                                //" [cs:0x" + to_hex(rebase(movTarget)) + "] = RAX");
+                               log(LogColor::Cyan, "[MOV] Found at 0x" + to_hex(rebase(movAddr)) +
+                                   " [cs:0x" + to_hex(rebase(movTarget)) + "] = RAX");*/
 
                             result.mov = movAddr;
                             result.movTarget = movTarget;
@@ -588,8 +604,8 @@ namespace YuBCore {
                         uintptr_t callAddr = currentAddr + callOffsetDown;
                         int32_t rel = getRel32(buffer, callOffsetDown + 1);
                         result.callAfter = callAddr + 5 + rel;
-                       // log(LogColor::Green, "[CALL down] at 0x" + to_hex(rebase(callAddr)) +
-                          //  " ! 0x" + to_hex(rebase(result.callAfter)));
+                        // log(LogColor::Green, "[CALL down] at 0x" + to_hex(rebase(callAddr)) +
+                           //  " ! 0x" + to_hex(rebase(result.callAfter)));
                         found = true;
                         break;
                     }
@@ -603,30 +619,30 @@ namespace YuBCore {
         }
 
         if (!result.lea) {
-           // log(LogColor::Red, "[-] No LEA or matching CALL found near 0x" + to_hex(stringAddress));
+            // log(LogColor::Red, "[-] No LEA or matching CALL found near 0x" + to_hex(stringAddress));
         }
         else {
-           // log(LogColor::Cyan, "[+] Final Result:");
-           // log(LogColor::Cyan, "    LEA   : 0x" + to_hex(result.lea));
+            // log(LogColor::Cyan, "[+] Final Result:");
+            // log(LogColor::Cyan, "    LEA   : 0x" + to_hex(result.lea));
 
-          /*  if (result.callBefore) log(LogColor::Cyan, "    CALL ↑: 0x" + to_hex(result.callBefore));
-            if (result.callAfter) log(LogColor::Cyan, "    CALL ↓: 0x" + to_hex(result.callAfter));
-            if (result.mov) log(LogColor::Cyan, "    MOV   : 0x" + to_hex(result.mov));*/
+           /*  if (result.callBefore) log(LogColor::Cyan, "    CALL ↑: 0x" + to_hex(result.callBefore));
+             if (result.callAfter) log(LogColor::Cyan, "    CALL ↓: 0x" + to_hex(result.callAfter));
+             if (result.mov) log(LogColor::Cyan, "    MOV   : 0x" + to_hex(result.mov));*/
         }
 
         return result;
     }
 
 
-    uintptr_t Xrefs_scan(const std::string& searchStr, int opcode = 0, int skipCallDown = 0, int skipCallUp = 0, int mov = 0 , const std::string& info = "") {
+    uintptr_t Xrefs_scan(const std::string& searchStr, int opcode = 0, int skipCallDown = 0, int skipCallUp = 0, int mov = 0, const std::string& info = "") {
 
-  /*      log(LogColor::Cyan, "[*] Scanning for references to: \"" + searchStr + "\"");
+        /*      log(LogColor::Cyan, "[*] Scanning for references to: \"" + searchStr + "\"");
 
-        log(LogColor::Cyan, "[*] opcode : 0x" + std::to_string(opcode));
-        log(LogColor::Cyan, "[*] skipCallDown: " + std::to_string(skipCallDown));
-        log(LogColor::Cyan, "[*] skipCallUp : " + std::to_string(skipCallUp));
-        log(LogColor::Cyan, "[*] mov : " + std::to_string(mov));
-*/
+              log(LogColor::Cyan, "[*] opcode : 0x" + std::to_string(opcode));
+              log(LogColor::Cyan, "[*] skipCallDown: " + std::to_string(skipCallDown));
+              log(LogColor::Cyan, "[*] skipCallUp : " + std::to_string(skipCallUp));
+              log(LogColor::Cyan, "[*] mov : " + std::to_string(mov));
+      */
 
         uintptr_t stringAddr = YuBCore::findStringInMemory(searchStr);
         if (!stringAddr) {
@@ -638,7 +654,7 @@ namespace YuBCore {
         while (true) {
             //log(LogColor::Yellow, "[*] Search attempt " + std::to_string(attempt++) + "...");
 
-            YuBCore::CodePattern pattern = YuBCore::findLeaCallPattern(searchStr, stringAddr, opcode, skipCallDown, skipCallUp, mov , info);
+            YuBCore::CodePattern pattern = YuBCore::findLeaCallPattern(searchStr, stringAddr, opcode, skipCallDown, skipCallUp, mov, info);
 
             if (searchStr.starts_with("Cluster") || searchStr.starts_with("cannot") || searchStr.starts_with("Maximum") && pattern.movTarget) {
                 //log(LogColor::Green, "[FOUND] " + searchStr);
@@ -668,13 +684,89 @@ namespace YuBCore {
         return 0x0;
     }
 
+    std::pair<std::vector<char>, std::string> hexStringToPattern(const std::string& hexPattern) {
+        std::vector<char> bytes;
+        std::string mask;
+        std::istringstream stream(hexPattern);
+        std::string byteString;
+
+        while (stream >> byteString) {
+            if (byteString == "?") {
+                bytes.push_back(0x00);  // Wildcard
+                mask += '?';
+            }
+            else {
+                bytes.push_back(static_cast<char>(strtol(byteString.c_str(), nullptr, 16)));
+                mask += 'x';
+            }
+        }
+        return { bytes, mask };
+    }
+
+    uintptr_t findPattern(const std::string& hexPattern) {
+        auto [patternBytes, mask] = hexStringToPattern(hexPattern);
+
+        SYSTEM_INFO sysInfo;
+        GetSystemInfo(&sysInfo);
+
+        uintptr_t minAddress = reinterpret_cast<uintptr_t>(sysInfo.lpMinimumApplicationAddress);
+        uintptr_t maxAddress = reinterpret_cast<uintptr_t>(sysInfo.lpMaximumApplicationAddress);
+
+        MEMORY_BASIC_INFORMATION memInfo;
+        std::vector<char> buffer;
+
+        HANDLE hProcess = YuBCore::hProcess;  // External handle
+
+        if (!hProcess || hProcess == INVALID_HANDLE_VALUE) {
+            std::cerr << "[!] Invalid process handle.\n";
+            return 0;
+        }
+
+        for (uintptr_t address = minAddress; address < maxAddress;) {
+            if (VirtualQueryEx(hProcess, reinterpret_cast<LPCVOID>(address), &memInfo, sizeof(memInfo)) == 0) {
+                address += 0x1000;  // Skip 4KB to prevent infinite loop on failure
+                continue;
+            }
+
+            // Only scan committed, readable/executable regions
+            if (memInfo.State == MEM_COMMIT &&
+                (memInfo.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_READONLY)) &&
+                !(memInfo.Protect & PAGE_GUARD)) {
+
+                size_t regionSize = memInfo.RegionSize;
+                buffer.resize(regionSize);
+                SIZE_T bytesRead = 0;
+
+                if (ReadProcessMemory(hProcess, reinterpret_cast<LPCVOID>(address), buffer.data(), regionSize, &bytesRead)) {
+                    for (size_t i = 0; i <= bytesRead - patternBytes.size(); ++i) {
+                        bool match = true;
+                        for (size_t j = 0; j < patternBytes.size(); ++j) {
+                            if (mask[j] == 'x' && buffer[i + j] != patternBytes[j]) {
+                                match = false;
+                                break;
+                            }
+                        }
+                        if (match) {
+                            return address + i;
+                        }
+                    }
+                }
+                // else: silently skip unreadable memory
+            }
+
+            address += memInfo.RegionSize;
+        }
+
+        return 0;  // Not found
+    }
+
     void dump() {
-        
+
         log(LogColor::Green, "[!] YuB-X Dumper!");
 
         LaunchRobloxGame("17574618959");
 
-        WaitForRobloxWindow();
+        WaitForRobloxProcess();
 
         DWORD pid = YuBCore::GetProcessIdByName(L"RobloxPlayerBeta.exe");
 
@@ -691,12 +783,15 @@ namespace YuBCore {
 
         const uintptr_t DecryptState_offets = Xrefs_scan("Script Start", 0x4C, 0, 0, 0, "DecryptState_offets");
         const uintptr_t GlobalState_offets = Xrefs_scan("Script Start", 0x4C, 0, 0, 0, "GlobalState_offets");
+        const uintptr_t PushInstance = findPattern("48 89 5C 24 08 57 48 83 EC ? 48 8B FA 48 8B D9 E8 ? ? ? ? 84 C0 74 ? 48 8B D7 48 8B CB 48 8B 5C 24");
 
         std::stringstream report;
+
         report << "\n"
+            << "namespace Update {\n"
             << "const uintptr_t Print                     = REBASE(0x" << std::hex << to_hex(rebase(Print)) << "); // Current identity is %d\n"
             << "const uintptr_t RawScheduler              = REBASE(0x" << to_hex(rebase(RawScheduler)) << "); // ClusterPacketCacheTaskQueue\n"
-            << "const uintptr_t GetGlobalStateForInstance = REBASE(0x" << to_hex(rebase(GetGlobalStateForInstance)) << ");// Script Start\n"
+            << "const uintptr_t GetGlobalStateForInstance = REBASE(0x" << to_hex(rebase(GetGlobalStateForInstance)) << "); // Script Start\n"
             << "const uintptr_t DecryptState              = REBASE(0x" << to_hex(rebase(DecryptState)) << "); // Script Start\n"
             << "const uintptr_t LuaVM__Load               = REBASE(0x" << to_hex(rebase(LuaVM__Load)) << "); // oldResult, moduleRef = ...\n"
             << "const uintptr_t Task__Defer               = REBASE(0x" << to_hex(rebase(Task__Defer)) << "); // Maximum re-entrancy depth (%i) \n\n\n\n"
@@ -704,8 +799,27 @@ namespace YuBCore {
             << "    const uintptr_t GlobalState = 0x" << to_hex(GlobalState_offets) << "; \n"
             << "    const uintptr_t DecryptState = 0x" << to_hex(DecryptState_offets) << "; \n"
             << "}\n"
-
+            << "namespace ExtraSpace {\n"
+            << "    const uintptr_t Identity      = 0x30;\n"
+            << "    const uintptr_t Capabilities  = 0x48;\n"
+            << "}\n\n"
+            << "namespace TaskScheduler {\n"
+            << "    const uintptr_t JobsStart = 0x1D0;\n"
+            << "    const uintptr_t JobName   = 0x18;\n"
+            << "}\n\n"
+            << "namespace DataModel {\n"
+            << "    const uintptr_t FakeDataModelPointer     = REBASE(0x62BB9F8);\n"
+            << "    const uintptr_t FakeDataModelToDataModel = 0x1B8;\n"
+            << "    const uintptr_t PlaceId                  = 0x1A0;\n"
+            << "    const uintptr_t ScriptContext            = 0x3C0;\n\n"
+            << "    namespace Information {\n"
+            << "        const uintptr_t PushInstance = REBASE(0x" << to_hex(rebase(PushInstance)) << ");\n"
+            << "        const uintptr_t Children     = 0x80;\n"
+            << "    }\n"
+            << "  }\n"
+            << "}\n"
             << "// YUBX::Core Dumper Finished!\n";
+
 
 
         CloseRoblox();
@@ -715,15 +829,15 @@ namespace YuBCore {
             log(LogColor::Green, line);
         }
 
-        std::ofstream outFile("dump_report.txt");
+        std::ofstream outFile("dump_report.cpp");
         if (outFile.is_open()) {
             outFile << report.str();
             outFile.close();
-            log(LogColor::Cyan, "[*] Report saved to dump_report.txt");
+            log(LogColor::Cyan, "[*] Report saved to dump_report.cpp");
 
-            #ifdef _WIN32
-                        system("start dump_report.txt");
-            #endif
+#ifdef _WIN32
+            system("start dump_report.cpp");
+#endif
         }
         else {
             log(LogColor::Red, "[-] Failed to save report to file.");
@@ -914,7 +1028,7 @@ namespace YuBCore {
                 printf("[-] Failed to allocate memory for strings\n");
                 return 1;
             }
-   
+
             if (!write_memory(*process, data_allocation, text.c_str(), strlen(text.c_str()) + 1) ||
                 !write_memory(*process, (char*)data_allocation + 0x100, caption.c_str(), strlen(caption.c_str()) + 1)) {
                 printf("[-] Failed to write strings\n");
@@ -1000,7 +1114,7 @@ namespace YuBCore {
                 thread,
                 thread_id,
                 *local_msgbox_addr,
-                (uintptr_t)*roblox_dll + 0x2c0058 
+                (uintptr_t)*roblox_dll + 0x2c0058
             );
 
             if (!resume_all_threads(pid)) {
