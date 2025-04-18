@@ -277,7 +277,7 @@ namespace YuBCore {
     void WaitForRobloxProcess() {
         std::cout << "[*] Waiting for Roblox process to start..." << std::endl;
         while (!IsRobloxRunning()) {
-            std::this_thread::sleep_for(std::chrono::seconds(5));
+            std::this_thread::sleep_for(std::chrono::seconds(0));
         }
         std::cout << "[+] Roblox process is now running!" << std::endl;
     }
@@ -292,7 +292,7 @@ namespace YuBCore {
     };
 
 
-    uintptr_t findStringInMemory(const std::string& searchStr, bool caseInsensitive = false, bool verbose = false, int maxRetries = 5, int retryDelayMs = 500) {
+    uintptr_t findStringInMemory(const std::string& searchStr, bool caseInsensitive = false, bool verbose = false, int retryDelayMs = 500) {
         std::lock_guard<std::mutex> lock(memoryMutex);
 
         auto matches = [&searchStr, caseInsensitive](const BYTE* data, size_t len) -> bool {
@@ -312,12 +312,15 @@ namespace YuBCore {
             return true;
             };
 
-        for (int attempt = 1; attempt <= maxRetries; ++attempt) {
+        int attempt = 1;
+        auto startTime = std::chrono::high_resolution_clock::now();
+
+        while (true) {
             uintptr_t scanStart = baseAddress;
             MEMORY_BASIC_INFORMATION mbi = { 0 };
 
             if (verbose) {
-                //std::cout << "[*] Search attempt " << attempt << "/" << maxRetries << "...\n";
+                std::cout << "[*] Search attempt " << attempt << "...\n";
             }
 
             while (scanStart < baseAddress + baseSize) {
@@ -335,29 +338,33 @@ namespace YuBCore {
                         for (size_t i = 0; i <= bytesRead - searchStr.length(); ++i) {
                             if (matches(&buffer[i], searchStr.length())) {
                                 uintptr_t foundAddr = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + i;
+
+                                auto endTime = std::chrono::high_resolution_clock::now();
+                                double elapsedSec = std::chrono::duration<double>(endTime - startTime).count();
+
                                 if (verbose) {
-                                    //std::cout << "[+] Found string at: 0x" << std::hex << foundAddr << std::dec << "\n";
+                                    std::cout << "[+] Found string at: 0x" << std::hex << foundAddr << std::dec << "\n";
+                                    std::cout << "[*] Search completed in " << elapsedSec << " seconds after " << attempt << " attempts.\n";
                                 }
+
                                 return foundAddr;
                             }
                         }
                     }
                 }
+
                 scanStart += mbi.RegionSize;
             }
 
-            if (attempt < maxRetries) {
-                if (verbose)
-                    //std::cout << "[!] String not found. Retrying in " << retryDelayMs << "ms...\n";
-                    std::this_thread::sleep_for(std::chrono::milliseconds(retryDelayMs));
+            if (verbose) {
+                std::cout << "[!] String not found. Retrying in " << retryDelayMs << "ms...\n";
             }
+
+            std::this_thread::sleep_for(std::chrono::milliseconds(retryDelayMs));
+            ++attempt;
         }
 
-        if (verbose) {
-            // std::cout << "[-] String not found in memory after " << maxRetries << " attempts.\n";
-        }
-
-        return 0;
+        return 0; // Technically unreachable unless interrupted
     }
 
 
@@ -567,14 +574,14 @@ namespace YuBCore {
                             int32_t disp = getRel32(buffer, j + 3);
                             uintptr_t movTarget = movAddr + 7 + disp;
 
-                            /*   if (skippedMov < 4) {
-                                   log(LogColor::Yellow, "[!] Skipping MOV at 0x" + to_hex(rebase(movAddr)));
-                                   ++skippedMov;
-                                   continue;
-                               }
+                         /*   if (skippedMov < 4) {
+                                log(LogColor::Yellow, "[!] Skipping MOV at 0x" + to_hex(rebase(movAddr)));
+                                ++skippedMov;
+                                continue;
+                            }
 
-                               log(LogColor::Cyan, "[MOV] Found at 0x" + to_hex(rebase(movAddr)) +
-                                   " [cs:0x" + to_hex(rebase(movTarget)) + "] = RAX");*/
+                            log(LogColor::Cyan, "[MOV] Found at 0x" + to_hex(rebase(movAddr)) +
+                                " [cs:0x" + to_hex(rebase(movTarget)) + "] = RAX");*/
 
                             result.mov = movAddr;
                             result.movTarget = movTarget;
