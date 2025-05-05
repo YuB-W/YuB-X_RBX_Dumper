@@ -125,7 +125,7 @@ void settingsMenu() {
 
 
 
-void DumpMain() {
+int DumpMain() {
     clearConsole(); // Clears console only when switching to dumping
 
     auto start = std::chrono::high_resolution_clock::now();
@@ -141,12 +141,14 @@ void DumpMain() {
     YuBCore::log(YuBCore::LogColor::Green, "[*] YuB-X finished!");
     YuBCore::log(YuBCore::LogColor::Green, "[*] Press any key to exit...");
     std::cin.get();
+
+    return 0;
 }
 
 int main() {
     int selectedOption = 0;
     char key;
-
+    
     while (true) {
         displayMenu(selectedOption);
         key = _getch();
