@@ -357,70 +357,122 @@ namespace YuBCore {
 
 
 
-    uintptr_t findPattern(const std::string& hexPattern, bool extractOffset = false) {
-        auto [patternBytes, mask] = hexStringToPattern(hexPattern);
+    uintptr_t findPattern(const std::string& hexPattern, bool extractOffset = false, const std::string& OffsetType = "dword") {
+    auto [patternBytes, mask] = hexStringToPattern(hexPattern);
+    SYSTEM_INFO sysInfo;
+    GetSystemInfo(&sysInfo);
 
-        SYSTEM_INFO sysInfo;
-        GetSystemInfo(&sysInfo);
+    uintptr_t minAddress = reinterpret_cast<uintptr_t>(sysInfo.lpMinimumApplicationAddress);
+    uintptr_t maxAddress = reinterpret_cast<uintptr_t>(sysInfo.lpMaximumApplicationAddress);
+    MEMORY_BASIC_INFORMATION memInfo;
+    std::vector<char> buffer;
+    HANDLE hProcess = YuBCore::hProcess;
 
-        uintptr_t minAddress = reinterpret_cast<uintptr_t>(sysInfo.lpMinimumApplicationAddress);
-        uintptr_t maxAddress = reinterpret_cast<uintptr_t>(sysInfo.lpMaximumApplicationAddress);
+    if (!hProcess || hProcess == INVALID_HANDLE_VALUE) {
+        log(LogColor::Red, "[ERROR] Invalid process handle.");
+        return 0;
+    }
 
-        MEMORY_BASIC_INFORMATION memInfo;
-        std::vector<char> buffer;
+    if (Globals::PatternDebug) {
+        log(LogColor::Yellow, "[DEBUG] Scanning memory...");
+    }
 
-        HANDLE hProcess = YuBCore::hProcess;
-        if (!hProcess || hProcess == INVALID_HANDLE_VALUE) {
-            std::cerr << "[!] Invalid process handle.\n";
-            return 0;
+    for (uintptr_t address = minAddress; address < maxAddress;) {
+        if (VirtualQueryEx(hProcess, reinterpret_cast<LPCVOID>(address), &memInfo, sizeof(memInfo)) == 0) {
+            address += 0x1000; // Move to the next memory region
+            continue;
         }
 
-        for (uintptr_t address = minAddress; address < maxAddress;) {
-            if (VirtualQueryEx(hProcess, reinterpret_cast<LPCVOID>(address), &memInfo, sizeof(memInfo)) == 0) {
-                address += 0x1000;
-                continue;
-            }
+        if (memInfo.State == MEM_COMMIT && (memInfo.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_READONLY)) && !(memInfo.Protect & PAGE_GUARD)) {
+            size_t regionSize = memInfo.RegionSize;
+            buffer.resize(regionSize);
+            SIZE_T bytesRead = 0;
 
-            if (memInfo.State == MEM_COMMIT &&
-                (memInfo.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_READONLY)) &&
-                !(memInfo.Protect & PAGE_GUARD)) {
-
-                size_t regionSize = memInfo.RegionSize;
-                buffer.resize(regionSize);
-                SIZE_T bytesRead = 0;
-
-                if (ReadProcessMemory(hProcess, reinterpret_cast<LPCVOID>(address), buffer.data(), regionSize, &bytesRead)) {
-                    for (size_t i = 0; i <= bytesRead - patternBytes.size(); ++i) {
-                        bool match = true;
-                        for (size_t j = 0; j < patternBytes.size(); ++j) {
-                            if (mask[j] == 'x' && buffer[i + j] != patternBytes[j]) {
-                                match = false;
-                                break;
-                            }
+            if (ReadProcessMemory(hProcess, reinterpret_cast<LPCVOID>(address), buffer.data(), regionSize, &bytesRead)) {
+                for (size_t i = 0; i <= bytesRead - patternBytes.size(); ++i) {
+                    bool match = true;
+                    for (size_t j = 0; j < patternBytes.size(); ++j) {
+                        if (mask[j] == 'x' && buffer[i + j] != patternBytes[j]) {
+                            match = false;
+                            break;
                         }
-                        if (match) {
-                            uintptr_t foundAddress = address + i;
+                    }
 
-                            if (extractOffset) {
-                                uintptr_t offsetAddress = foundAddress + 3; // Offset is typically after instruction prefix
-                                int32_t relativeOffset;
+                    if (match) {
+                        uintptr_t instructionAddress = address + i;
 
-                                if (ReadProcessMemory(hProcess, reinterpret_cast<LPCVOID>(offsetAddress), &relativeOffset, sizeof(relativeOffset), nullptr)) {
-                                    return offsetAddress + relativeOffset + sizeof(relativeOffset);  // Fully automatic adjustment
+                        if (Globals::PatternDebug) {
+                            log(LogColor::Green, "[DEBUG] Pattern found!");
+                        }
+
+                        if (extractOffset) {
+                            uintptr_t foundAddress = instructionAddress;
+                            uintptr_t offsetAddress = foundAddress + 3; // Assume relative offset starts after 3-byte instruction
+                            int32_t relativeOffset;
+
+                            if (ReadProcessMemory(hProcess, reinterpret_cast<LPCVOID>(offsetAddress), &relativeOffset, sizeof(relativeOffset), nullptr)) {
+                                size_t adjustment = 0;
+
+                                if (OffsetType == "dword") {
+                                    adjustment = sizeof(relativeOffset);
                                 }
-                                std::cerr << "[!] Failed to extract offset address.\n";
-                                return 0;
+                                else if (OffsetType == "byte") {
+                                    uintptr_t foundAddress = address + i; // base address of the pattern found
+                                    uintptr_t offsetAddress = foundAddress + 3; // Skip to the part of the code where the offset is stored
+                                    int32_t relativeOffset;
+
+                                    // Read the relative offset from memory at offsetAddress
+                                    if (ReadProcessMemory(hProcess, reinterpret_cast<LPCVOID>(offsetAddress), &relativeOffset, sizeof(relativeOffset), nullptr)) {
+                                        // Calculate the jump, considering the offset and instruction size (which is typically 5 bytes for a jump in x86)
+                                        uintptr_t targetAddress = foundAddress + relativeOffset + 7; // the '7' comes from the jump instruction size (0xE8 opcode)
+
+                                        // Ensure correct calculation of address using dynamic instruction size
+                                        return targetAddress;
+                                    }
+                                    else {
+                                        if (Globals::PatternDebug) {
+                                            log(LogColor::Red, "[ERROR] Failed to extract byte offset.");
+                                        }
+                                    }
+                                }
+                                else if (OffsetType == "unk") {
+                                    adjustment = sizeof(int32_t);
+                                }
+
+                                uintptr_t finalAddress = offsetAddress + relativeOffset + adjustment;
+
+                                // Validate the address before returning
+                                if (finalAddress < minAddress || finalAddress >= maxAddress) {
+                                    if (Globals::PatternDebug) {
+                                        log(LogColor::Red, "[ERROR] Found address is out of valid range.");
+                                    }
+                                    return 0;
+                                }
+
+                                return finalAddress;
                             }
 
-                            return foundAddress;  // Return pattern match address
+                            if (Globals::PatternDebug) {
+                                log(LogColor::Red, "[ERROR] Failed to extract offset.");
+                            }
+                            return 0;
                         }
+
+                        return instructionAddress;
                     }
                 }
             }
-            address += memInfo.RegionSize;
         }
-        return 0;  // Pattern not found
+
+        address += memInfo.RegionSize; // Move to the next region
     }
+
+    if (Globals::PatternDebug) {
+        log(LogColor::Red, "[ERROR] Pattern not found.");
+    }
+
+    return 0;
+}
 
 
 
