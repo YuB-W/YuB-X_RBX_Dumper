@@ -229,7 +229,7 @@ namespace YuBCore {
                 << "namespace ScriptContext {\n"
                 << "    const uintptr_t GlobalState = 0x" << to_hex(GlobalState_offets) << ";\n"
                 << "    const uintptr_t DecryptState = 0x" << to_hex(DecryptState_offets) << ";\n"
-                << "}\n"
+                << "}\n";
 
 
             std::ofstream out_file("dump_report.cpp");
