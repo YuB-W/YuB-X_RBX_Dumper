@@ -186,13 +186,13 @@ namespace YuBCore {
             const uintptr_t RawScheduler = findPattern(Patterns::GetPattern("RawScheduler"),true);
             foundOffsets += (RawScheduler != 0); showProgressBar(foundOffsets, totalScans);
 
-            const uintptr_t LuaO_nilobject = findPattern(Patterns::GetPattern("LuaO_nilobject"));
+            const uintptr_t LuaO_nilobject = findPattern(Patterns::GetPattern("LuaO_nilobject"),true,"unk");
             foundOffsets += (LuaO_nilobject != 0); showProgressBar(foundOffsets, totalScans);
 
-            const uintptr_t LuaH_Dummynode = findPattern(Patterns::GetPattern("LuaH_Dummynode"));
+            const uintptr_t LuaH_Dummynode = findPattern(Patterns::GetPattern("LuaH_Dummynode"),true,"unk");
             foundOffsets += (LuaH_Dummynode != 0); showProgressBar(foundOffsets, totalScans);
 
-            const uintptr_t KTable = findPattern(Patterns::GetPattern("KTable"));
+            const uintptr_t KTable = findPattern(Patterns::GetPattern("KTable"),true,"unk");
             foundOffsets += (KTable != 0); showProgressBar(foundOffsets, totalScans);
 
             const uintptr_t EnableLoadModule = findPattern(Patterns::GetPattern("EnableLoadModule"));
@@ -230,10 +230,7 @@ namespace YuBCore {
                 << "    const uintptr_t GlobalState = 0x" << to_hex(GlobalState_offets) << ";\n"
                 << "    const uintptr_t DecryptState = 0x" << to_hex(DecryptState_offets) << ";\n"
                 << "}\n"
-                << "namespace ExtraSpace {\n"
-                << "    const uintptr_t Identity      = 0x30;\n"
-                << "    const uintptr_t Capabilities  = 0x48;\n"
-                << "}\n";
+
 
             std::ofstream out_file("dump_report.cpp");
             if (out_file.is_open()) {
