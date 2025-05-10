@@ -15,12 +15,13 @@
 #include <array>
 #include <optional>
 #include <sstream>
+#include <chrono>
 #include "YuBUtils.hpp"
 #include "YuBRoblox.hpp"
 #include "YuBXRef.hpp"
 #include "YuBMemory.hpp"
 #include "Dumper.hpp"
-
+#include "Patterns.hpp"
 
 #pragma comment(lib, "Dbghelp.lib")
 
@@ -86,8 +87,7 @@ namespace YuBCore {
 
 
 
-#include <chrono>
-#include "Patterns.hpp"
+
 
     // Function to display a progress bar and detect if it's stuck
     void showProgressBar(int completed, int total) {
