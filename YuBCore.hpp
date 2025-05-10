@@ -125,7 +125,7 @@ namespace YuBCore {
     }
 
 
-    void dump() {
+    int dump() {
         log(LogColor::Green, "[!] YuB-X Dumper!");
 
         if (Globals::StartGameBeforeDump)
@@ -137,7 +137,7 @@ namespace YuBCore {
         if (check_is_running("RobloxPlayerBeta.exe")) {
             DWORD pid = YuBCore::GetProcessIdByName(L"RobloxPlayerBeta.exe");
             if (!pid || !YuBCore::attach(pid, "RobloxPlayerBeta.exe"))
-                return;
+                return 0;
 
             auto process = TMEM::setup(pid);
             dumper->bind(std::move(process));
@@ -222,10 +222,10 @@ namespace YuBCore {
                 << "const uintptr_t Luau_Execute              = REBASE(0x" << to_hex(rebase(Luau_Execute)) << ");\n"
                 << "const uintptr_t Task__Defer               = REBASE(0x" << to_hex(rebase(Task__Defer)) << ");\n"
                 << "const uintptr_t Task__Spawn               = REBASE(0x" << to_hex(rebase(Task__Spawn)) << ");\n"
-                << "const uintptr_t LuaO_nilobject            = REBASE(0x" << std::hex << to_hex(rebase(findPattern(Patterns::GetPattern("LuaO_nilobject")))) << ");\n"
-                << "const uintptr_t LuaH_Dummynode            = REBASE(0x" << std::hex << to_hex(rebase(findPattern(Patterns::GetPattern("LuaH_Dummynode")))) << ");\n"
-                << "const uintptr_t KTable                    = REBASE(0x" << std::hex << to_hex(rebase(findPattern(Patterns::GetPattern("KTable")))) << ");\n"
-                << "const uintptr_t EnableLoadModule          = REBASE(0x" << std::hex << to_hex(rebase(findPattern(Patterns::GetPattern("EnableLoadModule")))) << ");\n\n"
+                << "const uintptr_t LuaO_nilobject            = REBASE(0x" << std::hex << to_hex(rebase(LuaO_nilobject)) << ");\n"
+                << "const uintptr_t LuaH_Dummynode            = REBASE(0x" << std::hex << to_hex(rebase(LuaH_Dummynode)) << ");\n"
+                << "const uintptr_t KTable                    = REBASE(0x" << std::hex << to_hex(rebase(KTable)) << ");\n"
+                << "const uintptr_t EnableLoadModule          = REBASE(0x" << std::hex << to_hex(rebase(EnableLoadModule)) << ");\n\n"
                 << "namespace ScriptContext {\n"
                 << "    const uintptr_t GlobalState = 0x" << to_hex(GlobalState_offets) << ";\n"
                 << "    const uintptr_t DecryptState = 0x" << to_hex(DecryptState_offets) << ";\n"
@@ -253,6 +253,7 @@ namespace YuBCore {
                 log(LogColor::Red, "[-] Failed to write dump report.");
             }
         }
+        return 0;
     }
 
 
