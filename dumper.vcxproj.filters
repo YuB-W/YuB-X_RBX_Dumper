@@ -15,16 +15,20 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="Source\EntryPoint\EntryPoint.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
-    <ClCompile Include="Source\ActionLogger\sf_dumper.cpp">
-      <Filter>Source Files</Filter>
-    </ClCompile>
+    <ClCompile Include="Globals.cpp" />
+    <ClCompile Include="Source\EntryPoint\EntryPoint.cpp" />
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="YuBCore.hpp">
-      <Filter>Header Files</Filter>
-    </ClInclude>
+    <ClInclude Include="Dumper.hpp" />
+    <ClInclude Include="Globals.hpp" />
+    <ClInclude Include="Patterns.hpp" />
+    <ClInclude Include="YuBCore.hpp" />
+    <ClInclude Include="YuBMemory.hpp" />
+    <ClInclude Include="YuBRoblox.hpp" />
+    <ClInclude Include="YuBUtils.hpp" />
+    <ClInclude Include="YuBXRef.hpp" />
   </ItemGroup>
+  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
+  <ImportGroup Label="ExtensionTargets">
+  </ImportGroup>
 </Project>
