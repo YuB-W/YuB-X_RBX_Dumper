@@ -128,7 +128,7 @@ namespace YuBCore {
     void dump() {
         log(LogColor::Green, "[!] YuB-X Dumper!");
 
-        if (Globals::StartGameBeforeDummp)
+        if (Globals::StartGameBeforeDump)
         {
             LaunchRobloxGame("17574618959");
         }
