@@ -159,7 +159,7 @@ namespace YuBCore {
             const uintptr_t Task__Spawn = findPattern(Patterns::GetPattern("Task_Spawn"));
             foundOffsets += (Task__Spawn != 0); showProgressBar(foundOffsets, totalScans);
 
-            const uintptr_t LuaVM__Load = Xrefs_scan("oldResult, moduleRef", 0x48, 8);
+            const uintptr_t LuaVM__Load = Xrefs_scan("oldResult, moduleRef", 0x48, 6);
             foundOffsets += (LuaVM__Load != 0); showProgressBar(foundOffsets, totalScans);
 
             const uintptr_t GetGlobalStateForInstance = Xrefs_scan("Script Start", 0x4C, 0, 2);
