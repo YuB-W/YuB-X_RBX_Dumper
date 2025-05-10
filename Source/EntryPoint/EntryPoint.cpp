@@ -147,33 +147,38 @@ int DumpMain() {
 
 int main() {
     int selectedOption = 0;
-    char key;
-    
-    while (true) {
-        displayMenu(selectedOption);
-        key = _getch();
+char key;
 
-        if (key == 72) // Up arrow
-            selectedOption = (selectedOption - 1 + 3) % 3;
-        else if (key == 80) // Down arrow
-            selectedOption = (selectedOption + 1) % 3;
-        else if (key == 13) { // Enter key to select option
+while (true) {
+    displayMenu(selectedOption);
+    key = _getch();
 
-            if (selectedOption == 1) {
-                clearConsole();
-                settingsMenu(); // Open settings menu
-            }
-            else if (selectedOption == 2) {
-                clearConsole();
-                std::cout << "Exiting...\n";
-                break; // Exit application
-            }
-            else {
-                DumpMain(); // Run dump process
-                break;
-            }
+    if (key == 72) // Up arrow
+        selectedOption = (selectedOption - 1 + 3) % 3;
+    else if (key == 80) // Down arrow
+        selectedOption = (selectedOption + 1) % 3;
+    else if (key == 13) { // Enter key to select option
+        if (selectedOption == 1) {
+            clearConsole();
+            settingsMenu(); // Open settings menu
+            continue; // Return to menu after exiting settings
+        }
+        else if (selectedOption == 2) {
+            clearConsole();
+            std::cout << "Exiting...\n";
+            return 0; // Exit properly
+        }
+        else {
+            DumpMain(); // Run dump process
+            return 0; // Exit properly
         }
     }
+    else if (key == 27) { // ESC key pressed
+        clearConsole();
+        std::cout << "Returning to main menu...\n";
+        continue; // Loop back to main menu
+    }
+}
 
     return 0;
 }
