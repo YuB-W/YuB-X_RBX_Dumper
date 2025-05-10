@@ -115,7 +115,7 @@ namespace YuBCore {
             // If stuck for more than 10 seconds, rejoin
             if (duration > 10) {
                 std::cout << "\n[!] Progress stuck! Restarting...\n";
-                LaunchRobloxGame("4483381587"); // Re-launch
+                LaunchRobloxGame("17574618959"); // Re-launch
             }
         }
         else {
@@ -130,7 +130,7 @@ namespace YuBCore {
 
         if (Globals::StartGameBeforeDummp)
         {
-            LaunchRobloxGame("4483381587");
+            LaunchRobloxGame("17574618959");
         }
         WaitForRobloxProcess();
 
@@ -189,8 +189,8 @@ namespace YuBCore {
             const uintptr_t LuaO_nilobject = findPattern(Patterns::GetPattern("LuaO_nilobject"));
             foundOffsets += (LuaO_nilobject != 0); showProgressBar(foundOffsets, totalScans);
 
-            //const uintptr_t LuaH_Dummynode = findPattern(Patterns::GetPattern("LuaH_Dummynode"));
-            //foundOffsets += (LuaH_Dummynode != 0); showProgressBar(foundOffsets, totalScans);
+            const uintptr_t LuaH_Dummynode = findPattern(Patterns::GetPattern("LuaH_Dummynode"));
+            foundOffsets += (LuaH_Dummynode != 0); showProgressBar(foundOffsets, totalScans);
 
             const uintptr_t KTable = findPattern(Patterns::GetPattern("KTable"));
             foundOffsets += (KTable != 0); showProgressBar(foundOffsets, totalScans);
@@ -223,7 +223,7 @@ namespace YuBCore {
                 << "const uintptr_t Task__Defer               = REBASE(0x" << to_hex(rebase(Task__Defer)) << ");\n"
                 << "const uintptr_t Task__Spawn               = REBASE(0x" << to_hex(rebase(Task__Spawn)) << ");\n"
                 << "const uintptr_t LuaO_nilobject            = REBASE(0x" << std::hex << to_hex(rebase(findPattern(Patterns::GetPattern("LuaO_nilobject")))) << ");\n"
-                //<< "const uintptr_t LuaH_Dummynode            = REBASE(0x" << std::hex << to_hex(rebase(findPattern(Patterns::GetPattern("LuaH_Dummynode")))) << ");\n"
+                << "const uintptr_t LuaH_Dummynode            = REBASE(0x" << std::hex << to_hex(rebase(findPattern(Patterns::GetPattern("LuaH_Dummynode")))) << ");\n"
                 << "const uintptr_t KTable                    = REBASE(0x" << std::hex << to_hex(rebase(findPattern(Patterns::GetPattern("KTable")))) << ");\n"
                 << "const uintptr_t EnableLoadModule          = REBASE(0x" << std::hex << to_hex(rebase(findPattern(Patterns::GetPattern("EnableLoadModule")))) << ");\n\n"
                 << "namespace ScriptContext {\n"
