@@ -15,20 +15,37 @@
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClCompile Include="Globals.cpp" />
-    <ClCompile Include="Source\EntryPoint\EntryPoint.cpp" />
+    <ClCompile Include="Source\EntryPoint\EntryPoint.cpp">
+      <Filter>Source Files</Filter>
+    </ClCompile>
+    <ClCompile Include="Globals.cpp">
+      <Filter>Header Files</Filter>
+    </ClCompile>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="Dumper.hpp" />
-    <ClInclude Include="Globals.hpp" />
-    <ClInclude Include="Patterns.hpp" />
-    <ClInclude Include="YuBCore.hpp" />
-    <ClInclude Include="YuBMemory.hpp" />
-    <ClInclude Include="YuBRoblox.hpp" />
-    <ClInclude Include="YuBUtils.hpp" />
-    <ClInclude Include="YuBXRef.hpp" />
+    <ClInclude Include="YuBCore.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Dumper.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Globals.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="Patterns.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="YuBMemory.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="YuBRoblox.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="YuBUtils.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="YuBXRef.hpp">
+      <Filter>Header Files</Filter>
+    </ClInclude>
   </ItemGroup>
-  <Import Project="$(VCTargetsPath)\Microsoft.Cpp.targets" />
-  <ImportGroup Label="ExtensionTargets">
-  </ImportGroup>
 </Project>
