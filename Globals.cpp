@@ -3,6 +3,6 @@
 namespace Globals {
     bool XrefDebug = false;  // Set default values
     bool PatternDebug = false;
-    bool StartGameBeforeDummp = true;
+    bool StartGameBeforeDump = true;
     bool CloseGameAfterDump = true;
 }
