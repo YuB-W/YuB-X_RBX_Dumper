@@ -1,4 +1,7 @@
 #include "Globals.hpp"
+#include <map>
+#include <unordered_map>
+
 namespace YuBCore {
     struct CodePattern {
         uintptr_t lea = 0;
@@ -7,81 +10,85 @@ namespace YuBCore {
         uintptr_t mov = 0;
         uintptr_t movTarget = 0;
         uintptr_t offets = 0;
+        uintptr_t leaTarget = 0;
     };
 
-    uintptr_t findStringInMemory(const std::string& searchStr, bool caseInsensitive = false, bool verbose = false, int retryDelayMs = 1000) {
+    uintptr_t findStringInMemory(const std::string& searchStr, bool caseInsensitive = false, bool verbose = false, int retryDelayMs = 1000, int maxRetries = -1) {
         std::lock_guard<std::mutex> lock(memoryMutex);
 
-        auto matches = [&searchStr, caseInsensitive](const BYTE* data, size_t len) -> bool {
-            if (len < searchStr.length()) return false;
-            for (size_t i = 0; i < searchStr.length(); ++i) {
-                char memChar = static_cast<char>(data[i]);
-                char targetChar = searchStr[i];
-
-                if (caseInsensitive) {
-                    memChar = std::tolower(memChar);
-                    targetChar = std::tolower(targetChar);
-                }
-
-                if (memChar != targetChar)
-                    return false;
-            }
-            return true;
-            };
-
+        const auto startTime = std::chrono::high_resolution_clock::now();
         int attempt = 1;
-        auto startTime = std::chrono::high_resolution_clock::now();
 
-        while (true) {
+        std::vector<char> searchPattern(searchStr.begin(), searchStr.end());
+
+        if (caseInsensitive) {
+            std::transform(searchPattern.begin(), searchPattern.end(), searchPattern.begin(), ::tolower);
+        }
+
+        while (maxRetries < 0 || attempt <= maxRetries) {
             uintptr_t scanStart = baseAddress;
-            MEMORY_BASIC_INFORMATION mbi = { 0 };
+            MEMORY_BASIC_INFORMATION mbi{};
 
-            if (verbose) {
-                std::cout << "[*] Search attempt " << attempt << "...\n";
-            }
+            if (verbose)
+                std::cout << "\033[36m[*] Attempt " << attempt << "...\033[0m\n";
 
             while (scanStart < baseAddress + baseSize) {
                 if (!VirtualQueryEx(hProcess, reinterpret_cast<LPCVOID>(scanStart), &mbi, sizeof(mbi)))
                     break;
 
-                if ((mbi.State == MEM_COMMIT) &&
-                    (mbi.Protect & (PAGE_READONLY | PAGE_READWRITE | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE)) &&
-                    !(mbi.Protect & PAGE_GUARD)) {
+                const bool readable = mbi.State == MEM_COMMIT &&
+                    !(mbi.Protect & PAGE_GUARD) &&
+                    (mbi.Protect & (PAGE_READWRITE | PAGE_READONLY | PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE));
 
+                if (readable) {
                     std::vector<BYTE> buffer(mbi.RegionSize);
                     SIZE_T bytesRead = 0;
 
                     if (ReadProcessMemory(hProcess, mbi.BaseAddress, buffer.data(), buffer.size(), &bytesRead)) {
-                        for (size_t i = 0; i <= bytesRead - searchStr.length(); ++i) {
-                            if (matches(&buffer[i], searchStr.length())) {
-                                uintptr_t foundAddr = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + i;
+                        auto haystackBegin = buffer.begin();
+                        auto haystackEnd = buffer.begin() + bytesRead;
 
-                                auto endTime = std::chrono::high_resolution_clock::now();
-                                double elapsedSec = std::chrono::duration<double>(endTime - startTime).count();
+                        if (caseInsensitive) {
+                            std::transform(haystackBegin, haystackEnd, haystackBegin, ::tolower);
+                        }
 
-                                if (verbose) {
-                                    std::cout << "[+] Found string at: 0x" << std::hex << foundAddr << std::dec << "\n";
-                                    std::cout << "[*] Search completed in " << elapsedSec << " seconds after " << attempt << " attempts.\n";
-                                }
+                        auto it = std::search(
+                            haystackBegin, haystackEnd,
+                            searchPattern.begin(), searchPattern.end()
+                        );
 
-                                return foundAddr;
+                        if (it != haystackEnd) {
+                            uintptr_t foundAddr = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + std::distance(haystackBegin, it);
+
+                            auto endTime = std::chrono::high_resolution_clock::now();
+                            double elapsedSec = std::chrono::duration<double>(endTime - startTime).count();
+
+                            if (verbose) {
+                                std::cout << "\033[32m[+] String found at: 0x" << std::hex << foundAddr << "\033[0m\n";
+                                std::cout << "\033[36m[*] Completed in " << elapsedSec << "s after " << attempt << " attempt(s)\033[0m\n";
                             }
+
+                            return foundAddr;
                         }
                     }
                 }
 
-                scanStart += mbi.RegionSize;
+                scanStart = reinterpret_cast<uintptr_t>(mbi.BaseAddress) + mbi.RegionSize;
             }
 
             if (verbose) {
-                std::cout << "[!] String not found. Retrying in " << retryDelayMs << "ms...\n";
+                std::cout << "\033[33m[!] String not found. Retrying in " << retryDelayMs << "ms...\033[0m\n";
             }
 
             std::this_thread::sleep_for(std::chrono::milliseconds(retryDelayMs));
             ++attempt;
         }
 
-        return 0; // Technically unreachable unless interrupted
+        if (verbose) {
+            std::cout << "\033[31m[-] Search failed after max retries.\033[0m\n";
+        }
+
+        return 0;
     }
 
     enum class OperandType {
@@ -110,10 +117,7 @@ namespace YuBCore {
         CodePattern result;
         MEMORY_BASIC_INFORMATION mbi;
         uintptr_t currentAddr = baseAddress;
-
-        int scanMode = 1;
-
-        size_t callScanRange = (scanMode == 2) ? 0x350 : (scanMode == 3) ? 0x550 : 0x100;
+        size_t callScanRange = 0x300;
 
         auto getRel32 = [](const std::vector<BYTE>& buf, size_t offset) -> int32_t {
             return *reinterpret_cast<const int32_t*>(&buf[offset]);
@@ -123,13 +127,6 @@ namespace YuBCore {
             size_t index = startOffset, checked = 0, skipped = 0;
             while ((forward ? index < buf.size() - 5 : index >= 5) && checked < range) {
                 if (buf[index] == 0xE8) {
-                    uintptr_t callAddr = index;
-                    int32_t rel = getRel32(buf, index + 1);
-                    uintptr_t destAddr = callAddr + 5 + rel;
-
-                    // Clean formatted debug output
-                    std::string direction = forward ? "down" : "up";
-                    std::string status = (skipped < skip) ? "skipped" : "selected";
                     if (skipped++ < skip) {
                         index += forward ? 1 : -1;
                         ++checked;
@@ -143,10 +140,7 @@ namespace YuBCore {
             return 0;
             };
 
-
-
-        bool found = false;
-        while (!found && currentAddr < baseAddress + baseSize) {
+        while (currentAddr < baseAddress + baseSize) {
             if (!VirtualQueryEx(hProcess, reinterpret_cast<LPCVOID>(currentAddr), &mbi, sizeof(mbi))) break;
             if (!(mbi.State == MEM_COMMIT && (mbi.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE)))) {
                 currentAddr += mbi.RegionSize;
@@ -171,12 +165,79 @@ namespace YuBCore {
 
                 size_t leaOffset = leaAddr - currentAddr;
 
+
+                if (info.starts_with("FFlag")) {
+                    size_t functionStart = leaOffset;
+                    while (functionStart > 5 && !(buffer[functionStart] == 0x48 && buffer[functionStart + 1] == 0x83 && buffer[functionStart + 2] == 0xEC)) {
+                        functionStart--;
+                    }
+
+                    for (size_t j = functionStart; j + 7 < bytesRead; ++j) {
+                        if (buffer[j] == 0x48 && buffer[j + 1] == 0x8B && buffer[j + 2] == 0x0D) {
+                            int32_t rel = *reinterpret_cast<int32_t*>(&buffer[j + 3]);
+                            uintptr_t rip = currentAddr + j + 7;
+                            uintptr_t absAddr = rip + rel;
+
+                            result.mov = currentAddr + j;
+                            result.movTarget = absAddr;
+
+                            std::cout << "[*] MOV rcx, [rip+rel] @ 0x" << std::hex << result.mov
+                                << " => target: 0x" << to_hex(rebase(result.movTarget)) << std::endl;
+                        }
+
+                        if (buffer[j] == 0x4C && buffer[j + 1] == 0x8D && buffer[j + 2] == 0x05) {
+                            int32_t rel = *reinterpret_cast<int32_t*>(&buffer[j + 3]);
+                            uintptr_t instrAddr = currentAddr + j;
+                            uintptr_t rip = instrAddr + 7;
+                            uintptr_t absAddr = rip + rel;
+
+                            if (absAddr > baseAddress && absAddr < baseAddress + baseSize) {
+                                result.leaTarget = absAddr;
+
+                                std::cout << "[LEA] found at: 0x" << to_hex(rebase(instrAddr))
+                                    << " | rel32 = 0x" << rel
+                                    << " | RIP = 0x" << rip
+                                    << " | target = 0x" << to_hex(rebase(absAddr)) << std::endl;
+                            }
+                        }
+
+                        if (result.movTarget && result.leaTarget)
+                            break;
+                    }
+                }
+
+                if (info.starts_with("FlogDataBank")) {
+                    size_t functionStart = leaOffset;
+                    while (functionStart > 5 &&
+                        !(buffer[functionStart] == 0x48 &&
+                            buffer[functionStart + 1] == 0x83 &&
+                            buffer[functionStart + 2] == 0xEC)) {
+                        functionStart--;
+                    }
+
+                    for (size_t j = functionStart; j + 7 < bytesRead; ++j) {
+                        if (buffer[j] == 0x48 && buffer[j + 1] == 0x8B && buffer[j + 2] == 0x0D) {
+                            int32_t rel = *reinterpret_cast<int32_t*>(&buffer[j + 3]);
+                            uintptr_t rip = currentAddr + j + 7;
+                            uintptr_t absAddr = rip + rel;
+
+                            result.mov = currentAddr + j;
+                            result.movTarget = absAddr;
+
+                            std::cout << "[MOV] rcx = 0x" << std::hex << result.mov
+                                << " => target = 0x" << to_hex(rebase(result.movTarget)) << std::endl;
+                        }
+                        if (result.movTarget)
+                            break;
+                    }
+                }
+
+
                 if (info.starts_with("DecryptState_offets")) {
                     size_t count = 0;
                     for (size_t j = static_cast<size_t>(leaOffset); j >= 6; --j) {
                         if (buffer[j - 6] == 0x48 && buffer[j - 5] == 0x8D && buffer[j - 4] == 0x88) {
                             int32_t offset = *reinterpret_cast<int32_t*>(&buffer[j - 3]);
-                            uintptr_t foundAddr = currentAddr + j - 6;
                             if (count == 0) result.offets = offset;
                             count++;
                             if (count == 2) break;
@@ -189,7 +250,6 @@ namespace YuBCore {
                     for (size_t j = static_cast<size_t>(leaOffset); j >= 6; --j) {
                         if (buffer[j - 6] == 0x48 && buffer[j - 5] == 0x8D && buffer[j - 4] == 0x88) {
                             int32_t offset = *reinterpret_cast<int32_t*>(&buffer[j - 3]);
-                            uintptr_t foundAddr = currentAddr + j - 6;
                             if (count == 1) result.offets = offset;
                             count++;
                             if (count == 2) break;
@@ -198,18 +258,14 @@ namespace YuBCore {
                 }
 
                 if (searchStr.starts_with("Maximum")) {
-
                     int skipCount = 0;
-
                     for (size_t j = i; j >= 2; --j) {
                         if (buffer[j - 2] == 0x48) {
                             if (skipCount < 17) {
                                 ++skipCount;
                                 continue;
                             }
-
-                            uintptr_t movAddr = currentAddr + j - 2;
-                            result.movTarget = movAddr;
+                            result.movTarget = currentAddr + j - 2;
                             break;
                         }
                     }
@@ -217,31 +273,16 @@ namespace YuBCore {
 
                 if (mov > 0) {
                     size_t skippedMov = 0;
-
                     for (size_t j = 0; j + 6 < bytesRead; ++j) {
                         if (buffer[j] == 0x48 && buffer[j + 1] == 0x89 && buffer[j + 2] == 0x05) {
                             uintptr_t movAddr = currentAddr + j;
                             int32_t disp = getRel32(buffer, j + 3);
                             uintptr_t movTarget = movAddr + 7 + disp;
 
-                            if (skippedMov < mov && info != "mov") {
-                                log(LogColor::Yellow, "\n\n[!] Skipping MOV at 0x" + to_hex(rebase(movAddr)));
-                                log(LogColor::Yellow, "[!] Offset RAX at: 0x" + to_hex(rebase(movTarget)) + "\n\n");
-                                ++skippedMov;
+                            if (skippedMov < mov) {
+                                skippedMov++;
                                 continue;
                             }
-
-
-                            if (skippedMov < mov && info == "debug") {
-                                log(LogColor::Yellow, "\n\n[!] Skipping MOV at 0x" + to_hex(rebase(movAddr)));
-                                log(LogColor::Yellow, "[!] Offset RAX at: 0x" + to_hex(rebase(movTarget)) + "\n\n");
-                                ++skippedMov;
-                                continue;
-                            }
-
-                            log(LogColor::Cyan, "[MOV] Found at 0x" + to_hex(rebase(movAddr)) +
-                                " [cs:0x" + to_hex(rebase(movTarget)) + "] = RAX");
-                            log(LogColor::Cyan, "[Offset] Found at 0x" + to_hex(rebase(movTarget)) + "\n\n");
 
                             result.mov = movAddr;
                             result.movTarget = movTarget;
@@ -250,31 +291,21 @@ namespace YuBCore {
                     }
                 }
 
-                // CALL UP
                 if (skipCallUp > 0) {
                     size_t callOffsetUp = findNearbyCall(buffer, i, callScanRange, false, skipCallUp);
                     if (callOffsetUp) {
-                        uintptr_t callAddr = currentAddr + callOffsetUp;
-                        int32_t rel = getRel32(buffer, callOffsetUp + 1);
-                        result.callBefore = callAddr + 5 + rel;
-                        found = true;
+                        result.callBefore = currentAddr + callOffsetUp + 5 + getRel32(buffer, callOffsetUp + 1);
                         break;
                     }
                 }
 
-                // CALL DOWN
                 if (skipCallDown > 0) {
                     size_t callOffsetDown = findNearbyCall(buffer, i + 7, callScanRange, true, skipCallDown);
                     if (callOffsetDown) {
-                        uintptr_t callAddr = currentAddr + callOffsetDown;
-                        int32_t rel = getRel32(buffer, callOffsetDown + 1);
-                        result.callAfter = callAddr + 5 + rel;
-                        found = true;
+                        result.callAfter = currentAddr + callOffsetDown + 5 + getRel32(buffer, callOffsetDown + 1);
                         break;
                     }
                 }
-
-                found = true;
                 break;
             }
 
@@ -295,15 +326,23 @@ namespace YuBCore {
                 log(LogColor::Cyan, "[*] Starting Xrefs_scan for: " + searchStr);
                 log(LogColor::Yellow, "[*] Attempt #" + std::to_string(attempt) + " scanning LEA call pattern...");
             }
+
+
             YuBCore::CodePattern pattern = YuBCore::findLeaCallPattern(searchStr, stringAddr, opcode, skipCallDown, skipCallUp, mov, info);
+
+
             if (Globals::XrefDebug) {
                 log(LogColor::Cyan, "[DEBUG] searchStr: " + searchStr);
                 log(LogColor::Cyan, "[DEBUG] stringAddr: " + std::to_string(stringAddr));
                 log(LogColor::Cyan, "[DEBUG] opcode: " + std::to_string(opcode));
             }
-
-
-            if (searchStr.starts_with("Cluster") || searchStr.starts_with("cannot") || searchStr.starts_with("Maximum") && pattern.movTarget) {
+            else if (pattern.leaTarget) {
+                if (Globals::XrefDebug) {
+                    log(LogColor::Green, "[DEBUG] Returning callAfter");
+                }
+                return pattern.leaTarget;
+            }
+            if (searchStr.starts_with("Cluster") || searchStr.starts_with("cannot") || searchStr.starts_with("Maximum") || pattern.movTarget) {
                 if (Globals::XrefDebug) {
                     log(LogColor::Green, "[DEBUG] Returning movTarget");
                 }
@@ -355,9 +394,78 @@ namespace YuBCore {
         return { bytes, mask };
     }
 
+    uintptr_t fastfindPattern(const std::string& hexPattern, bool extractOffset = false, const std::string& OffsetType = "dword") {
+        auto [pattern, mask] = hexStringToPattern(hexPattern);
+        if (pattern.empty() || pattern.size() != mask.size() || pattern.size() < 1) return 0; // Handles tiny patterns
 
+        HANDLE hProc = YuBCore::hProcess;
+        if (!hProc || hProc == INVALID_HANDLE_VALUE) return 0;
 
-    uintptr_t findPattern(const std::string& hexPattern, bool extractOffset = false, const std::string& OffsetType = "dword") {
+        SYSTEM_INFO sysInfo;
+        GetSystemInfo(&sysInfo);
+        uintptr_t min = reinterpret_cast<uintptr_t>(sysInfo.lpMinimumApplicationAddress);
+        uintptr_t max = reinterpret_cast<uintptr_t>(sysInfo.lpMaximumApplicationAddress);
+
+        MEMORY_BASIC_INFORMATION mbi;
+        std::vector<char> buffer;
+
+        while (true) {
+            for (uintptr_t addr = min; addr < max; addr += mbi.RegionSize) {
+                if (!VirtualQueryEx(hProc, (LPCVOID)addr, &mbi, sizeof(mbi)))
+                    continue;
+
+                if (mbi.State != MEM_COMMIT || !(mbi.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE)))
+                    continue;
+
+                SIZE_T size = mbi.RegionSize;
+                buffer.resize(size);
+                SIZE_T bytesRead;
+
+                if (!ReadProcessMemory(hProc, (LPCVOID)mbi.BaseAddress, buffer.data(), size, &bytesRead))
+                    continue;
+
+                const size_t plen = pattern.size();
+                if (plen > bytesRead) continue; // Avoid scanning if pattern is larger than the read memory block
+
+                for (size_t i = 0; i <= bytesRead - plen; ++i) {
+                    bool match = true;
+
+                    for (size_t j = 0; j < plen; ++j) {
+                        if (mask[j] == 'x' && buffer[i + j] != pattern[j]) {
+                            match = false;
+                            break;
+                        }
+                    }
+
+                    if (match) {
+                        uintptr_t result = (uintptr_t)mbi.BaseAddress + i;
+
+                        if (extractOffset) {
+                            int32_t rel = 0;
+                            uintptr_t offsetAddr = result + 3;
+
+                            if (!ReadProcessMemory(hProc, (LPCVOID)offsetAddr, &rel, sizeof(rel), nullptr))
+                                continue;
+
+                            uintptr_t finalOffset = (OffsetType == "byte")
+                                ? result + rel + 7
+                                : offsetAddr + rel + sizeof(rel);
+
+                            if (finalOffset >= min && finalOffset < max)
+                                return finalOffset;
+                        }
+                        else {
+                            return result;
+                        }
+                    }
+                }
+            }
+
+            Sleep(1); // Prevent excessive CPU usage
+        }
+    }
+
+    uintptr_t findPattern2(const std::string& hexPattern, int matchIndex = 0, bool extractOffset = false, const std::string& OffsetType = "dword") {
         auto [patternBytes, mask] = hexStringToPattern(hexPattern);
         SYSTEM_INFO sysInfo;
         GetSystemInfo(&sysInfo);
@@ -377,13 +485,16 @@ namespace YuBCore {
             log(LogColor::Yellow, "[DEBUG] Scanning memory...");
         }
 
+        int currentMatch = 0;
         for (uintptr_t address = minAddress; address < maxAddress;) {
             if (VirtualQueryEx(hProcess, reinterpret_cast<LPCVOID>(address), &memInfo, sizeof(memInfo)) == 0) {
-                address += 0x1000; // Move to the next memory region
+                address += 0x1000;
                 continue;
             }
 
-            if (memInfo.State == MEM_COMMIT && (memInfo.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_READONLY)) && !(memInfo.Protect & PAGE_GUARD)) {
+            if (memInfo.State == MEM_COMMIT &&
+                (memInfo.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_READONLY)) &&
+                !(memInfo.Protect & PAGE_GUARD)) {
                 size_t regionSize = memInfo.RegionSize;
                 buffer.resize(regionSize);
                 SIZE_T bytesRead = 0;
@@ -399,6 +510,11 @@ namespace YuBCore {
                         }
 
                         if (match) {
+                            if (currentMatch < matchIndex) {
+                                ++currentMatch;
+                                continue;
+                            }
+
                             uintptr_t instructionAddress = address + i;
 
                             if (Globals::PatternDebug) {
@@ -407,7 +523,7 @@ namespace YuBCore {
 
                             if (extractOffset) {
                                 uintptr_t foundAddress = instructionAddress;
-                                uintptr_t offsetAddress = foundAddress + 3; // Assume relative offset starts after 3-byte instruction
+                                uintptr_t offsetAddress = foundAddress + 3;
                                 int32_t relativeOffset;
 
                                 if (ReadProcessMemory(hProcess, reinterpret_cast<LPCVOID>(offsetAddress), &relativeOffset, sizeof(relativeOffset), nullptr)) {
@@ -417,16 +533,12 @@ namespace YuBCore {
                                         adjustment = sizeof(relativeOffset);
                                     }
                                     else if (OffsetType == "byte") {
-                                        uintptr_t foundAddress = address + i; // base address of the pattern found
-                                        uintptr_t offsetAddress = foundAddress + 3; // Skip to the part of the code where the offset is stored
+                                        uintptr_t foundAddress = address + i;
+                                        uintptr_t offsetAddress = foundAddress + 3;
                                         int32_t relativeOffset;
 
-                                        // Read the relative offset from memory at offsetAddress
                                         if (ReadProcessMemory(hProcess, reinterpret_cast<LPCVOID>(offsetAddress), &relativeOffset, sizeof(relativeOffset), nullptr)) {
-                                            // Calculate the jump, considering the offset and instruction size (which is typically 5 bytes for a jump in x86)
-                                            uintptr_t targetAddress = foundAddress + relativeOffset + 7; // the '7' comes from the jump instruction size (0xE8 opcode)
-
-                                            // Ensure correct calculation of address using dynamic instruction size
+                                            uintptr_t targetAddress = foundAddress + relativeOffset + 7;
                                             return targetAddress;
                                         }
                                         else {
@@ -441,7 +553,6 @@ namespace YuBCore {
 
                                     uintptr_t finalAddress = offsetAddress + relativeOffset + adjustment;
 
-                                    // Validate the address before returning
                                     if (finalAddress < minAddress || finalAddress >= maxAddress) {
                                         if (Globals::PatternDebug) {
                                             log(LogColor::Red, "[ERROR] Found address is out of valid range.");
@@ -464,7 +575,7 @@ namespace YuBCore {
                 }
             }
 
-            address += memInfo.RegionSize; // Move to the next region
+            address += memInfo.RegionSize;
         }
 
         if (Globals::PatternDebug) {
@@ -472,31 +583,6 @@ namespace YuBCore {
         }
 
         return 0;
-    }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    bool match_with_wildcards(const uint8_t* data, const std::vector<uint8_t>& pattern) {
-        for (size_t i = 0; i < pattern.size(); ++i) {
-            if (pattern[i] != 0x00 && data[i] != pattern[i])
-                return false;
-        }
-        return true;
     }
 
     bool attachx(DWORD pid, const std::string& moduleName) {
@@ -517,9 +603,6 @@ namespace YuBCore {
                         if (GetModuleInformation(hProcess, hMods[i], &modInfo, sizeof(modInfo))) {
                             baseAddress = reinterpret_cast<uintptr_t>(modInfo.lpBaseOfDll);
                             baseSize = modInfo.SizeOfImage;
-                           // std::cout << "[+] Attached to module: " << szModName << "\n";
-                           // std::cout << "[+] Base: 0x" << std::hex << baseAddress << ", Size: 0x"
-                           //     << baseSize << std::dec << "\n";
                             return true;
                         }
                     }
@@ -539,15 +622,15 @@ namespace YuBCore {
 
         HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPMODULE | TH32CS_SNAPMODULE32, pid);
         if (hSnap != INVALID_HANDLE_VALUE) {
-            MODULEENTRY32W modEntry;  // Use WIDE version
+            MODULEENTRY32W modEntry;  
             modEntry.dwSize = sizeof(modEntry);
-            if (Module32FirstW(hSnap, &modEntry)) {  // Use Module32FirstW
+            if (Module32FirstW(hSnap, &modEntry)) {  
                 do {
-                    if (!_wcsicmp(modEntry.szModule, L"RobloxPlayerBeta.dll")) {  // Ensure WCHAR string
+                    if (!_wcsicmp(modEntry.szModule, L"RobloxPlayerBeta.dll")) {  
                         modBaseAddr = (uintptr_t)modEntry.modBaseAddr;
                         break;
                     }
-                } while (Module32NextW(hSnap, &modEntry));  // Use Module32NextW
+                } while (Module32NextW(hSnap, &modEntry));  
             }
         }
         CloseHandle(hSnap);
@@ -572,16 +655,9 @@ namespace YuBCore {
         return 0;
     }
 
-
-
-    auto dump_threadmap() -> uintptr_t {
-        std::vector<std::vector<uint8_t>> patterns = {
-            { 0x4C, 0x03, 0x0D, 0x00, 0x00, 0x00, 0x00, 0x41, 0x83, 0xE2 } // Updated pattern
-        };
-
+    uintptr_t dump_bitmap() {
         uintptr_t base = get_hyperion();
         SIZE_T size = get_hyperion_size();
-
         if (!hProcess || hProcess == INVALID_HANDLE_VALUE || !base || !size)
             return 0;
 
@@ -596,28 +672,22 @@ namespace YuBCore {
             }
 
             if (mbi.State == MEM_COMMIT &&
-                (mbi.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE | PAGE_READONLY)) &&
+                (mbi.Protect & (PAGE_EXECUTE_READ | PAGE_EXECUTE_READWRITE)) &&
                 !(mbi.Protect & PAGE_GUARD)) {
 
                 buffer.resize(mbi.RegionSize);
-                SIZE_T bytesRead;
+                SIZE_T bytesRead = 0;
 
                 if (ReadProcessMemory(hProcess, reinterpret_cast<LPCVOID>(addr), buffer.data(), mbi.RegionSize, &bytesRead)) {
-                    for (auto& pat : patterns) {
-                        for (size_t i = 0; i + pat.size() < bytesRead; ++i) {
-                            bool match = true;
+                    for (size_t i = 0; i + 7 <= bytesRead; ++i) {
+                        // match: 4C 8B 1D ?? ?? ?? ??
+                        if (buffer[i] == 0x4C && buffer[i + 1] == 0x8B && buffer[i + 2] == 0x1D) {
+                            int32_t rel = *reinterpret_cast<int32_t*>(&buffer[i + 3]);
+                            uintptr_t rip = addr + i + 7;
+                            uintptr_t absolute = rip + rel;
 
-                            for (size_t j = 0; j < pat.size(); ++j) {
-                                if (pat[j] != 0x00 && buffer[i + j] != pat[j]) { // Wildcard handling
-                                    match = false;
-                                    break;
-                                }
-                            }
-
-                            if (match) {
-                                int32_t rel = *reinterpret_cast<int32_t*>(&buffer[i + 3]);
-                                uintptr_t abs = addr + i + 7 + rel;
-                                return abs - base;
+                            if (absolute >= base && absolute < end) {
+                                return absolute - base;  // return REBASE-able offset
                             }
                         }
                     }
@@ -630,7 +700,6 @@ namespace YuBCore {
         return 0;
     }
 
-    
     auto dump_setinsert() -> uintptr_t {
         std::vector<uint8_t> pattern = {
             0x55, 0x41, 0x57, 0x41, 0x56, 0x41, 0x55, 0x41, 0x54, 0x56, 0x57, 0x53,
@@ -686,26 +755,4 @@ namespace YuBCore {
 
         return 0;
     }
-
-
-
-
-
-
-    
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-    
 }
