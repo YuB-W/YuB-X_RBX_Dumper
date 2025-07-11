@@ -14,14 +14,10 @@
 ---
 
 ## 💡 Features
-- 📝 Dumps in-memory Lua scripts from running Roblox clients  
-- 🎮 Extracts assets like textures, meshes, and models  
 - 🧠 Reverse engineering support for debugging and analysis  
 - 📦 Automatic file organization and timestamped logs  
 - ⚡ Lightweight, fast, and easy to use
 ---
-
-## 🚀 Getting Started
 
 ### Requirements
 
