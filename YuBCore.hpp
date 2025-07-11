@@ -124,138 +124,212 @@ namespace YuBCore {
         }
     }
 
+    std::string GetRobloxExePath() {
+        std::string exePath;
+        HANDLE hSnap = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+        if (hSnap == INVALID_HANDLE_VALUE) return exePath;
+
+        PROCESSENTRY32 pe = { 0 };
+        pe.dwSize = sizeof(pe);
+
+        if (Process32First(hSnap, &pe)) {
+            do {
+                if (_stricmp(pe.szExeFile, "RobloxPlayerBeta.exe") == 0) {
+                    HANDLE hProc = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, FALSE, pe.th32ProcessID);
+                    if (hProc) {
+                        char buf[MAX_PATH];
+                        DWORD sz = MAX_PATH;
+                        if (QueryFullProcessImageNameA(hProc, 0, buf, &sz)) {
+                            exePath = buf;
+                            CloseHandle(hProc);
+                            break;
+                        }
+                        CloseHandle(hProc);
+                    }
+                }
+            } while (Process32Next(hSnap, &pe));
+        }
+
+        CloseHandle(hSnap);
+        return exePath;
+    }
+
+    std::string ExtractRobloxVersion(const std::string& exePath) {
+        namespace fs = std::filesystem;
+        fs::path path(exePath);
+        fs::path parent = path.parent_path();
+        fs::path grandparent = parent.parent_path();
+
+        auto starts_with_version = [](const std::string& folder) {
+            return folder.size() > 8 &&
+                std::equal(folder.begin(), folder.begin() + 8, "version-", [](char a, char b) {
+                return std::tolower(a) == std::tolower(b);
+                    });
+            };
+
+        std::string folder = parent.filename().string();
+        if (starts_with_version(folder))
+            return folder;
+
+        std::string upper = grandparent.filename().string();
+        if (starts_with_version(upper))
+            return upper;
+
+        return "unknown";
+    }
+
 
     int dump() {
         log(LogColor::Green, "[!] YuB-X Dumper!");
 
         if (Globals::StartGameBeforeDump)
-        {
             LaunchRobloxGame("17574618959");
-        }
+
         WaitForRobloxProcess();
 
-        if (check_is_running("RobloxPlayerBeta.exe")) {
-            DWORD pid = YuBCore::GetProcessIdByName(L"RobloxPlayerBeta.exe");
-            if (!pid || !YuBCore::attach(pid, "RobloxPlayerBeta.exe"))
-                return 0;
+        if (!check_is_running("RobloxPlayerBeta.exe"))
+            return 0;
 
-            auto process = TMEM::setup(pid);
-            dumper->bind(std::move(process));
+        DWORD pid = YuBCore::GetProcessIdByName(L"RobloxPlayerBeta.exe");
+        if (!pid || !YuBCore::attach(pid, "RobloxPlayerBeta.exe"))
+            return 0;
 
-            log(LogColor::Green, "[!] Start Dump...");
-            std::cout << "\nProgress:\n";
+        auto process = TMEM::setup(pid);
+        dumper->bind(std::move(process));
 
-            int totalScans = 18; // Including the new offsets
-            int foundOffsets = 0;
+        log(LogColor::Green, "[!] Start Dump...");
+        std::cout << "\nProgress:\n";
 
-            // Offset scanning while dynamically updating the progress bar
-            const uintptr_t Print = Xrefs_scan("Current identity is %d", 0x48, 1, 0);
-            foundOffsets += (Print != 0); showProgressBar(foundOffsets, totalScans);
+        int totalScans = 18;
+        int foundOffsets = 0;
 
-            /*const uintptr_t Task__Defer = Xrefs_scan("Maximum re-entrancy depth (%i) exceeded calling task.defer", 0x48, 0, 0, 0);*/
-            const uintptr_t Task__Defer = findPattern(Patterns::GetPattern("Task_Defer"));
-            foundOffsets += (Task__Defer != 0); showProgressBar(foundOffsets, totalScans);
+        // === SCANS ===
+        const uintptr_t Print = Xrefs_scan("Current identity is %d", 0x48, 1, 0);
+        foundOffsets += (Print != 0);             showProgressBar(foundOffsets, totalScans);
 
-            const uintptr_t Task__Spawn = findPattern(Patterns::GetPattern("Task_Spawn"));
-            foundOffsets += (Task__Spawn != 0); showProgressBar(foundOffsets, totalScans);
+        const uintptr_t LuaVM__Load = Xrefs_scan("oldResult, moduleRef", 0x48, 12);
+        foundOffsets += (LuaVM__Load != 0);       showProgressBar(foundOffsets, totalScans);
 
-            const uintptr_t LuaVM__Load = Xrefs_scan("oldResult, moduleRef", 0x48, 6);
-            foundOffsets += (LuaVM__Load != 0); showProgressBar(foundOffsets, totalScans);
+        const uintptr_t GetGlobalStateForInstance = Xrefs_scan("Script Start", 0x48, 0, 1);
+        foundOffsets += (GetGlobalStateForInstance != 0); showProgressBar(foundOffsets, totalScans);
 
-            const uintptr_t GetGlobalStateForInstance = Xrefs_scan("Script Start", 0x4C, 0, 2);
-            foundOffsets += (GetGlobalStateForInstance != 0); showProgressBar(foundOffsets, totalScans);
+        const uintptr_t PushInstance = fastfindPattern(Patterns::GetPattern("PushInstance"));
+        foundOffsets += (PushInstance != 0);      showProgressBar(foundOffsets, totalScans);
 
-            const uintptr_t DecryptState = Xrefs_scan("Script Start", 0x4C, 0, 1);
-            foundOffsets += (DecryptState != 0); showProgressBar(foundOffsets, totalScans);
+        const uintptr_t Luau_Execute = fastfindPattern(Patterns::GetPattern("Luau_Execute"));
+        foundOffsets += (Luau_Execute != 0);      showProgressBar(foundOffsets, totalScans);
 
-            const uintptr_t DecryptState_offets = Xrefs_scan("Script Start", 0x4C, 0, 0, 0, "DecryptState_offets");
-            foundOffsets += (DecryptState_offets != 0); showProgressBar(foundOffsets, totalScans);
+        const uintptr_t RawScheduler = fastfindPattern(Patterns::GetPattern("RawScheduler"), true);
+        foundOffsets += (RawScheduler != 0);      showProgressBar(foundOffsets, totalScans);
 
-            const uintptr_t GlobalState_offets = Xrefs_scan("Script Start", 0x4C, 0, 0, 0, "GlobalState_offets");
-            foundOffsets += (GlobalState_offets != 0); showProgressBar(foundOffsets, totalScans);
+        const uintptr_t LuaO_nilobject = fastfindPattern(Patterns::GetPattern("LuaO_nilobject"), true, "unk");
+        foundOffsets += (LuaO_nilobject != 0);    showProgressBar(foundOffsets, totalScans);
 
-            const uintptr_t PushInstance = findPattern(Patterns::GetPattern("PushInstance"));
-            foundOffsets += (PushInstance != 0); showProgressBar(foundOffsets, totalScans);
+        const uintptr_t LuaH_Dummynode = fastfindPattern(Patterns::GetPattern("LuaH_Dummynode"), true, "unk");
+        foundOffsets += (LuaH_Dummynode != 0);    showProgressBar(foundOffsets, totalScans);
 
-            const uintptr_t Require = findPattern(Patterns::GetPattern("Require"));
-            foundOffsets += (Require != 0); showProgressBar(foundOffsets, totalScans);
+        const uintptr_t KTable = fastfindPattern(Patterns::GetPattern("KTable"), true, "unk");
+        foundOffsets += (KTable != 0);            showProgressBar(foundOffsets, totalScans);
 
-            const uintptr_t Luau_Execute = findPattern(Patterns::GetPattern("Luau_Execute"));
-            foundOffsets += (Luau_Execute != 0); showProgressBar(foundOffsets, totalScans);
+        const uintptr_t EnableLoadModule = Xrefs_scan("EnableLoadModule", 0x48, 1, 0, 0, "FFlag");
+        foundOffsets += (EnableLoadModule != 0);  showProgressBar(foundOffsets, totalScans);
 
-            const uintptr_t RawScheduler = findPattern(Patterns::GetPattern("RawScheduler"),true);
-            foundOffsets += (RawScheduler != 0); showProgressBar(foundOffsets, totalScans);
+        const uintptr_t DebugCheckRenderThreading = Xrefs_scan("DebugCheckRenderThreading", 0x48, 1, 0, 0, "FFlag");
+        foundOffsets += (DebugCheckRenderThreading != 0); showProgressBar(foundOffsets, totalScans);
 
-            const uintptr_t LuaO_nilobject = findPattern(Patterns::GetPattern("LuaO_nilobject"),true,"unk");
-            foundOffsets += (LuaO_nilobject != 0); showProgressBar(foundOffsets, totalScans);
+        const uintptr_t RenderDebugCheckThreading2 = Xrefs_scan("RenderDebugCheckThreading2", 0x48, 1, 0, 0, "FFlag");
+        foundOffsets += (RenderDebugCheckThreading2 != 0); showProgressBar(foundOffsets, totalScans);
 
-            const uintptr_t LuaH_Dummynode = findPattern(Patterns::GetPattern("LuaH_Dummynode"),true,"unk");
-            foundOffsets += (LuaH_Dummynode != 0); showProgressBar(foundOffsets, totalScans);
+        const uintptr_t DisableCorescriptLoadstring = Xrefs_scan("DisableCorescriptLoadstring", 0x48, 1, 0, 0, "FFlag");
+        foundOffsets += (DisableCorescriptLoadstring != 0); showProgressBar(foundOffsets, totalScans);
 
-            const uintptr_t KTable = findPattern(Patterns::GetPattern("KTable"),true,"unk");
-            foundOffsets += (KTable != 0); showProgressBar(foundOffsets, totalScans);
+        const uintptr_t LockViolationInstanceCrash = Xrefs_scan("LockViolationInstanceCrash", 0x48, 1, 0, 0, "FFlag");
+        foundOffsets += (LockViolationInstanceCrash != 0); showProgressBar(foundOffsets, totalScans);
 
-            const uintptr_t EnableLoadModule = findPattern(Patterns::GetPattern("EnableLoadModule"));
-            foundOffsets += (EnableLoadModule != 0); showProgressBar(foundOffsets, totalScans);
+        const uintptr_t LockViolationScriptCrash = Xrefs_scan("LockViolationScriptCrash", 0x48, 1, 0, 0, "FFlag");
+        foundOffsets += (LockViolationScriptCrash != 0); showProgressBar(foundOffsets, totalScans);
 
-            //// New offsets
-            const uintptr_t dumpsetinsert = dump_setinsert();
-            foundOffsets += (dumpsetinsert != 0); showProgressBar(foundOffsets, totalScans);
+        const uintptr_t LuaStepIntervalMsOverrideEnabled = Xrefs_scan("LuaStepIntervalMsOverrideEnabled", 0x48, 1, 0, 0, "FFlag");
+        foundOffsets += (LuaStepIntervalMsOverrideEnabled != 0); showProgressBar(foundOffsets, totalScans);
 
-            const uintptr_t dumpthreadmap = dump_threadmap();
-            foundOffsets += (dumpthreadmap != 0); showProgressBar(foundOffsets, totalScans);
+        const uintptr_t TaskSchedulerTargetFps = Xrefs_scan("TaskSchedulerTargetFps", 0x48, 1, 0, 0, "FFlag");
+        foundOffsets += (TaskSchedulerTargetFps != 0); showProgressBar(foundOffsets, totalScans);
 
-            std::cout << "\nScanning complete! Found offsets: " << foundOffsets << "/" << totalScans << std::endl;
-
-            // Generate dump file
-            std::stringstream report;
-            report << "\n"
-                << "namespace Update {\n"
-                << "const uintptr_t dumpsetinsert             = REBASE(0x" << std::hex << to_hex(dumpsetinsert) << ");\n"
-                << "const uintptr_t dumpthreadmap             = REBASE(0x" << std::hex << to_hex(dumpthreadmap) << ");\n"
-                << "const uintptr_t Print                     = REBASE(0x" << std::hex << to_hex(rebase(Print)) << ");\n"
-                << "const uintptr_t RawScheduler              = REBASE(0x" << to_hex(rebase(RawScheduler)) << ");\n"
-                << "const uintptr_t GetGlobalStateForInstance = REBASE(0x" << to_hex(rebase(GetGlobalStateForInstance)) << ");\n"
-                << "const uintptr_t DecryptState              = REBASE(0x" << to_hex(rebase(DecryptState)) << ");\n"
-                << "const uintptr_t LuaVM__Load               = REBASE(0x" << to_hex(rebase(LuaVM__Load)) << ");\n"
-                << "const uintptr_t Require                   = REBASE(0x" << to_hex(rebase(Require)) << ");\n"
-                << "const uintptr_t Luau_Execute              = REBASE(0x" << to_hex(rebase(Luau_Execute)) << ");\n"
-                << "const uintptr_t Task__Defer               = REBASE(0x" << to_hex(rebase(Task__Defer)) << ");\n"
-                << "const uintptr_t Task__Spawn               = REBASE(0x" << to_hex(rebase(Task__Spawn)) << ");\n"
-                << "const uintptr_t LuaO_nilobject            = REBASE(0x" << std::hex << to_hex(rebase(LuaO_nilobject)) << ");\n"
-                << "const uintptr_t LuaH_Dummynode            = REBASE(0x" << std::hex << to_hex(rebase(LuaH_Dummynode)) << ");\n"
-                << "const uintptr_t KTable                    = REBASE(0x" << std::hex << to_hex(rebase(KTable)) << ");\n"
-                << "const uintptr_t EnableLoadModule          = REBASE(0x" << std::hex << to_hex(rebase(EnableLoadModule)) << ");\n\n"
-                << "namespace ScriptContext {\n"
-                << "    const uintptr_t GlobalState = 0x" << to_hex(GlobalState_offets) << ";\n"
-                << "    const uintptr_t DecryptState = 0x" << to_hex(DecryptState_offets) << ";\n"
-                << "}\n";
+        const uintptr_t WndProcessCheck = Xrefs_scan("WndProcessCheck", 0x48, 1, 0, 0, "FFlag");
+        foundOffsets += (WndProcessCheck != 0); showProgressBar(foundOffsets, totalScans);
 
 
-            std::ofstream out_file("dump_report.cpp");
-            if (out_file.is_open()) {
-                out_file << report.str();
-                out_file.close();
+        const uintptr_t dumpsetinsert = dump_setinsert();
+        foundOffsets += (dumpsetinsert != 0);     showProgressBar(foundOffsets, totalScans);
 
-                if (Globals::CloseGameAfterDump)
-                {
-                    CloseRoblox();
-                }
-                
+        const uintptr_t dumpthreadmap = dump_bitmap();
+        foundOffsets += (dumpthreadmap != 0);     showProgressBar(foundOffsets, totalScans);
 
-                log(LogColor::Cyan, "[*] Dump written to dump_report.cpp");
-                
+        std::cout << "\nScanning complete! Found offsets: " << foundOffsets << "/" << totalScans << std::endl;
+
+        std::string exePath = GetRobloxExePath();
+        std::string version = ExtractRobloxVersion(exePath);
+        std::ostringstream datetime;///
+        {
+            auto now = std::chrono::system_clock::now();
+            std::time_t now_c = std::chrono::system_clock::to_time_t(now);
+            std::tm now_tm;
 #ifdef _WIN32
-                system("start dump_report.cpp");
+            localtime_s(&now_tm, &now_c);
+#else
+            localtime_r(&now_c, &now_tm);
 #endif
-            }
-            else {
-                log(LogColor::Red, "[-] Failed to write dump report.");
-            }
+            datetime << std::put_time(&now_tm, "%Y-%m-%d %H:%M:%S");
         }
+        std::ostringstream report;
+        report << "// YuB-X Version: " << "Public" << "\n";
+        report << "// Discord: " << "https://discord.com/invite/yubx" << "\n";
+
+        report << "// Roblox Version: " << version << "\n";
+        report << "// Dump Time:      " << datetime.str() << "\n\n";
+
+        report << "namespace Update {\n";
+        report << "    const uintptr_t setinsert                 = REBASE(0x" << to_hex(dumpsetinsert) << ");\n";
+        report << "    const uintptr_t bitmap                    = REBASE(0x" << to_hex(dumpthreadmap) << ");\n";
+        report << "    const uintptr_t Print                     = REBASE(0x" << to_hex(rebase(Print)) << ");\n";
+        report << "    const uintptr_t RawScheduler              = REBASE(0x" << to_hex(rebase(RawScheduler)) << ");\n";
+        report << "    const uintptr_t GetGlobalStateForInstance = REBASE(0x" << to_hex(rebase(GetGlobalStateForInstance)) << ");\n";
+        report << "    const uintptr_t LuaVM__Load               = REBASE(0x" << to_hex(rebase(LuaVM__Load)) << ");\n";
+        report << "    const uintptr_t Luau_Execute              = REBASE(0x" << to_hex(rebase(Luau_Execute)) << ");\n";
+        report << "    const uintptr_t LuaO_nilobject            = REBASE(0x" << to_hex(rebase(LuaO_nilobject)) << ");\n";
+        report << "    const uintptr_t LuaH_Dummynode            = REBASE(0x" << to_hex(rebase(LuaH_Dummynode)) << ");\n";
+        report << "    const uintptr_t KTable                    = REBASE(0x" << to_hex(rebase(KTable)) << ");\n";
+        report << "    const uintptr_t EnableLoadModule          = REBASE(0x" << to_hex(rebase(EnableLoadModule)) << ");\n";
+        report << "}\n\n";
+
+        report << "namespace InternalFastFlags {\n";
+        report << "    const uintptr_t EnableLoadModule                 = REBASE(0x" << to_hex(rebase(EnableLoadModule)) << ");\n";
+        report << "    const uintptr_t DebugCheckRenderThreading        = REBASE(0x" << to_hex(rebase(DebugCheckRenderThreading)) << ");\n";
+        report << "    const uintptr_t RenderDebugCheckThreading2       = REBASE(0x" << to_hex(rebase(RenderDebugCheckThreading2)) << ");\n";
+        report << "    const uintptr_t DisableCorescriptLoadstring      = REBASE(0x" << to_hex(rebase(DisableCorescriptLoadstring)) << ");\n";
+        report << "    const uintptr_t LockViolationInstanceCrash       = REBASE(0x" << to_hex(rebase(LockViolationInstanceCrash)) << ");\n";
+        report << "    const uintptr_t LockViolationScriptCrash         = REBASE(0x" << to_hex(rebase(LockViolationScriptCrash)) << ");\n";
+        report << "    const uintptr_t WndProcessCheck                  = REBASE(0x" << to_hex(rebase(WndProcessCheck)) << ");\n";
+        report << "    const uintptr_t LuaStepIntervalMsOverrideEnabled = REBASE(0x" << to_hex(rebase(LuaStepIntervalMsOverrideEnabled)) << ");\n";
+        report << "}\n";
+
+        std::ofstream out_file("dump_report.cpp");
+        if (out_file.is_open()) {
+            out_file << report.str();
+            out_file.close();
+
+            if (Globals::CloseGameAfterDump)
+                CloseRoblox();
+
+            log(LogColor::Cyan, "[*] Dump written to dump_report.cpp");
+#ifdef _WIN32
+            system("start dump_report.cpp");
+#endif
+        }
+        else {
+            log(LogColor::Red, "[-] Failed to write dump report.");
+        }
+
         return 0;
     }
-
-
-
 }
